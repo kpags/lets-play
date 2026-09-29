@@ -5,6 +5,7 @@ const PORT = Number(process.env.PORT || 8787)
 const RECONNECT_GRACE_MS = 10_000
 const SLOT_GROUPS = ['one', 'two']
 const ROOM_MODES = new Set(['Team', 'Free For All'])
+const TOURNAMENT_FORMATS = new Set(['Elimination', 'Ranking'])
 const MAX_GAMES = new Set([3, 5, 8, 10])
 const REACTION_TIME_PREP_MS = 3_000
 const REACTION_TIME_RESULT_MS = 3_000
@@ -29,7 +30,7 @@ const IMPOSTOR_COLOR_PICK_MS = 5_000
 const IMPOSTOR_COLOR_WARNING_MS = 2_000
 const IMPOSTOR_COLOR_RETURN_MS = 500
 const IMPOSTOR_COLOR_FAREWELL_MS = 3_000
-const GAME_QUEUE_TRANSITION_MS = 3_000
+const INTERMISSION_DURATION_MS = 15_000
 const GAME_CATALOG = JSON.parse(readFileSync(new URL('../data/games/free_for_all.json', import.meta.url), 'utf8'))
 const GAME_IDS = new Set(GAME_CATALOG.map((game) => game.id))
 const SUPPORTED_GAME_IDS = new Set(['reaction_time', 'guess_the_time', 'impostor_color'])
@@ -108,6 +109,7 @@ function roomView(room) {
     code: room.code,
     hostId: room.hostId,
     mode: room.mode,
+    format: room.format,
     maxGames: room.maxGames,
     manualGames: room.manualGames,
     selectedGames: room.selectedGames,
@@ -117,6 +119,11 @@ function roomView(room) {
       endsAt: room.instructions.endsAt,
       acknowledgedPlayerIds: [...room.instructions.acknowledgedPlayerIds],
     },
+    intermission: room.intermission && {
+      endsAt: room.intermission.endsAt,
+      acknowledgedPlayerIds: [...room.intermission.acknowledgedPlayerIds],
+    },
+    tournament: tournamentView(room),
     game: room.game ? gameView(room) : null,
     slots: Object.fromEntries(SLOT_GROUPS.map((group) => [
       group,
@@ -135,6 +142,30 @@ function gameView(room) {
   if (room.game.id === 'guess_the_time') return guessTimeGameView(room)
   if (room.game.id === 'impostor_color') return impostorColorGameView(room)
   return reactionGameView(room)
+}
+
+function tournamentView(room) {
+  if (!room.tournament) return null
+  const playerById = new Map(roomPlayers(room).map((player) => [player.id, player]))
+  const standings = room.tournament.playerIds
+    .map((playerId) => ({
+      playerId,
+      playerName: playerById.get(playerId)?.name || '',
+      eliminated: room.tournament.eliminatedIds.includes(playerId),
+      points: room.tournament.points.get(playerId) || 0,
+    }))
+    .sort((left, right) => room.tournament.format === 'Elimination'
+      ? Number(left.eliminated) - Number(right.eliminated) || left.playerName.localeCompare(right.playerName)
+      : right.points - left.points || left.playerName.localeCompare(right.playerName))
+  return {
+    format: room.tournament.format,
+    eliminatedIds: room.tournament.eliminatedIds,
+    standings,
+    complete: room.tournament.complete,
+    completedAt: room.tournament.completedAt,
+    winnerId: room.tournament.winnerId,
+    winnerName: playerById.get(room.tournament.winnerId)?.name || '',
+  }
 }
 
 function impostorColorGameView(room) {
@@ -178,7 +209,7 @@ function reactionGameView(room) {
   return {
     id: game.id,
     round: game.round,
-    maxRounds: REACTION_TIME_ROUNDS,
+    maxRounds: game.maxRounds,
     phase: game.phase,
     activePlayerId: game.activePlayerId,
     activePlayerName: playerById.get(game.activePlayerId)?.name || '',
@@ -217,7 +248,7 @@ function guessTimeGameView(room) {
   return {
     id: game.id,
     round: game.round,
-    maxRounds: GUESS_TIME_ROUNDS,
+    maxRounds: game.maxRounds,
     phase: game.phase,
     phaseEndsAt: game.phaseEndsAt,
     startedAt: game.startedAt,
@@ -269,6 +300,82 @@ function clearInstructionTimer(room) {
   room.instructionTimer = null
 }
 
+function createTournament(room) {
+  const playerIds = roomPlayers(room).map((player) => player.id)
+  room.tournament = {
+    format: room.format,
+    playerIds,
+    eliminatedIds: [],
+    points: new Map(playerIds.map((playerId) => [playerId, 0])),
+    complete: false,
+    completedAt: null,
+    winnerId: null,
+  }
+}
+
+function tournamentGamePlayers(room) {
+  if (!room.tournament) return roomPlayers(room).map((player) => player.id)
+  return room.tournament.playerIds.filter((playerId) => {
+    if (room.tournament.format === 'Elimination' && room.tournament.eliminatedIds.includes(playerId)) return false
+    return Boolean(findPlayer(room, playerId))
+  })
+}
+
+function completeTournament(room) {
+  const tournament = room.tournament
+  if (!tournament || tournament.complete) return
+  tournament.complete = true
+  tournament.completedAt = Date.now()
+  const remaining = tournamentGamePlayers(room)
+  if (tournament.format === 'Elimination') {
+    tournament.winnerId = remaining.length === 1 ? remaining[0] : null
+  } else {
+    tournament.winnerId = [...tournament.playerIds]
+      .sort((left, right) => (tournament.points.get(right) || 0) - (tournament.points.get(left) || 0))[0] || null
+  }
+}
+
+function applyRankingPoints(room, game) {
+  const allocation = GAME_CATALOG.find((entry) => entry.id === game.id)?.points_allocation
+  if (!allocation || !room.tournament || room.tournament.format !== 'Ranking' || game.pointsApplied) return
+  const addPoints = (playerId, points) => room.tournament.points.set(playerId, (room.tournament.points.get(playerId) || 0) + points)
+  if (game.id === 'reaction_time') {
+    game.leaderboard.forEach((entry, index) => addPoints(entry.playerId, Number(allocation[String(index + 1)] || 0)))
+  } else if (game.id === 'guess_the_time') {
+    [...game.playerIds]
+      .sort((left, right) => {
+        const leftGuess = game.guesses.get(left)
+        const rightGuess = game.guesses.get(right)
+        const leftDifference = Number.isFinite(leftGuess) ? Math.abs(leftGuess - game.stopwatchTime) : Number.POSITIVE_INFINITY
+        const rightDifference = Number.isFinite(rightGuess) ? Math.abs(rightGuess - game.stopwatchTime) : Number.POSITIVE_INFINITY
+        return leftDifference - rightDifference
+      })
+      .forEach((playerId, index) => addPoints(playerId, Number(allocation[String(index + 1)] || 0)))
+  } else if (game.id === 'impostor_color') {
+    game.playerIds.forEach((playerId) => addPoints(
+      playerId,
+      Number(game.eliminatedIds.includes(playerId) ? allocation.eliminated : allocation.retained) || 0,
+    ))
+  }
+  game.pointsApplied = true
+}
+
+function applyEliminations(room, game) {
+  if (!room.tournament || room.tournament.format !== 'Elimination' || game.eliminationsApplied) return
+  room.tournament.eliminatedIds.push(...game.eliminatedIds.filter((playerId) => !room.tournament.eliminatedIds.includes(playerId)))
+  game.eliminationsApplied = true
+}
+
+function finalizeTournamentGame(room, game) {
+  applyEliminations(room, game)
+  applyRankingPoints(room, game)
+}
+
+function usesPlacementRanking(room, gameId) {
+  const allocation = GAME_CATALOG.find((game) => game.id === gameId)?.points_allocation
+  return room.format === 'Ranking' && allocation && Object.keys(allocation).every((key) => /^\d+$/.test(key))
+}
+
 function selectedGame(room) {
   const gameId = room.gameQueue?.[room.gameIndex]
     || (room.manualGames && room.selectedGames.includes('guess_the_time') ? 'guess_the_time' : 'reaction_time')
@@ -288,17 +395,57 @@ function randomGameQueue(maxGames) {
   return queue.slice(0, maxGames)
 }
 
+function hasNextTournamentGame(room) {
+  if (room.tournament?.format === 'Elimination' && tournamentGamePlayers(room).length <= 1) return false
+  return room.gameIndex < room.gameQueue.length - 1
+}
+
 function advanceGameQueue(room) {
-  if (room.gameIndex >= room.gameQueue.length - 1) return false
+  if (!hasNextTournamentGame(room)) {
+    completeTournament(room)
+    room.intermission = null
+    broadcastRoom(room, 'game_state')
+    return false
+  }
+  clearGameTimer(room)
+  room.intermission = null
   room.gameIndex += 1
   beginInstructions(room)
   return true
 }
 
-function scheduleNextGame(room) {
-  if (room.gameIndex >= room.gameQueue.length - 1) return false
-  scheduleGame(room, GAME_QUEUE_TRANSITION_MS, () => advanceGameQueue(room))
+function requiredIntermissionPlayers(room) {
+  const activeIds = new Set(tournamentGamePlayers(room))
+  return roomPlayers(room).filter((player) => !player.bot && player.connected && activeIds.has(player.id))
+}
+
+function maybeAdvanceIntermission(room) {
+  if (room.phase !== 'intermission' || !room.intermission) return false
+  const allAcknowledged = requiredIntermissionPlayers(room)
+    .every((player) => room.intermission.acknowledgedPlayerIds.has(player.id))
+  if (!allAcknowledged) return false
+  advanceGameQueue(room)
   return true
+}
+
+function beginIntermission(room) {
+  if (!hasNextTournamentGame(room)) {
+    completeTournament(room)
+    broadcastRoom(room, 'game_state')
+    return false
+  }
+  room.phase = 'intermission'
+  room.intermission = {
+    endsAt: Date.now() + INTERMISSION_DURATION_MS,
+    acknowledgedPlayerIds: new Set(roomPlayers(room).filter((player) => player.bot).map((player) => player.id)),
+  }
+  broadcastRoom(room, 'game_state')
+  scheduleGame(room, INTERMISSION_DURATION_MS, () => advanceGameQueue(room))
+  return true
+}
+
+function scheduleNextGame(room) {
+  return beginIntermission(room)
 }
 
 function requiredInstructionPlayers(room) {
@@ -329,6 +476,7 @@ function beginInstructions(room) {
   const game = selectedGame(room)
   if (!game) return false
   room.phase = 'instructions'
+  room.intermission = null
   room.game = null
   room.instructions = {
     game: {
@@ -449,18 +597,21 @@ function finishReactionRound(room) {
   null)
   if (!slowest) return
 
-  game.eliminatedIds.push(slowest.playerId)
-  game.eliminatedPlayerId = slowest.playerId
+  if (!usesPlacementRanking(room, game.id)) {
+    game.eliminatedIds.push(slowest.playerId)
+    game.eliminatedPlayerId = slowest.playerId
+  }
   sortReactionLeaderboard(game)
   game.phase = 'round_result'
   game.phaseEndsAt = Date.now() + REACTION_TIME_RESULT_MS
   broadcastRoom(room, 'game_state')
   scheduleGame(room, REACTION_TIME_RESULT_MS, () => {
     const survivors = activeReactionPlayers(room)
-    if (survivors.length === 1 || game.round >= REACTION_TIME_ROUNDS) {
+    if (survivors.length === 1 || game.round >= game.maxRounds) {
       game.phase = 'complete'
       game.phaseEndsAt = null
       game.winnerId = survivors.length === 1 ? survivors[0] : null
+      finalizeTournamentGame(room, game)
       broadcastRoom(room, 'game_state')
       scheduleNextGame(room)
       return
@@ -468,16 +619,19 @@ function finishReactionRound(room) {
     game.round += 1
     game.turnIndex = 0
     game.results = []
+    game.leaderboard.forEach((entry) => { entry.reactionTime = null })
+    sortReactionLeaderboard(game)
     game.eliminatedPlayerId = null
     setReactionTurn(room)
   })
 }
 
 function startReactionTimeGame(room) {
-  const playerIds = roomPlayers(room).map((player) => player.id)
+  const playerIds = tournamentGamePlayers(room)
   room.game = {
     id: 'reaction_time',
     round: 1,
+    maxRounds: room.format === 'Ranking' ? 1 : REACTION_TIME_ROUNDS,
     turnIndex: 0,
     playerIds,
     eliminatedIds: [],
@@ -514,6 +668,7 @@ function completeGuessTimeGame(room, survivors) {
   game.phase = 'complete'
   game.phaseEndsAt = null
   game.winnerId = survivors.length === 1 ? survivors[0] : null
+  finalizeTournamentGame(room, game)
   broadcastRoom(room, 'game_state')
   scheduleNextGame(room)
 }
@@ -596,14 +751,16 @@ function finishGuessTimeRound(room) {
   }, null)
   if (!farthest) return completeGuessTimeGame(room, survivors)
 
-  game.eliminatedIds.push(farthest.playerId)
-  game.eliminatedPlayerId = farthest.playerId
+  if (!usesPlacementRanking(room, game.id)) {
+    game.eliminatedIds.push(farthest.playerId)
+    game.eliminatedPlayerId = farthest.playerId
+  }
   game.phase = 'round_result'
   game.phaseEndsAt = Date.now() + GUESS_TIME_RESULT_MS
   broadcastRoom(room, 'game_state')
   scheduleGame(room, GUESS_TIME_RESULT_MS, () => {
     const remaining = activeGuessTimePlayers(room)
-    if (remaining.length <= 1 || game.round >= GUESS_TIME_ROUNDS) {
+    if (remaining.length <= 1 || game.round >= game.maxRounds) {
       completeGuessTimeGame(room, remaining)
       return
     }
@@ -613,10 +770,11 @@ function finishGuessTimeRound(room) {
 }
 
 function startGuessTimeGame(room) {
-  const playerIds = roomPlayers(room).map((player) => player.id)
+  const playerIds = tournamentGamePlayers(room)
   room.game = {
     id: 'guess_the_time',
     round: 1,
+    maxRounds: room.format === 'Ranking' ? 1 : GUESS_TIME_ROUNDS,
     phase: 'preparing',
     phaseEndsAt: null,
     startedAt: null,
@@ -659,8 +817,9 @@ function finishImpostorColorGame(room) {
   game.phaseEndsAt = null
   game.currentPlayerId = null
   game.winnerId = activeImpostorColorPlayers(room).length === 1 ? activeImpostorColorPlayers(room)[0] : null
+  finalizeTournamentGame(room, game)
   broadcastRoom(room, 'game_state')
-  advanceGameQueue(room)
+  beginIntermission(room)
 }
 
 function beginImpostorColorFarewell(room) {
@@ -786,7 +945,7 @@ function pickImpostorColorBottle(room, clientId, bottleIndex) {
 }
 
 function startImpostorColorGame(room) {
-  const playerIds = roomPlayers(room).map((player) => player.id)
+  const playerIds = tournamentGamePlayers(room)
   const redIndexes = new Set([...Array(IMPOSTOR_COLOR_BOTTLE_COUNT).keys()]
     .sort(() => Math.random() - 0.5)
     .slice(0, IMPOSTOR_COLOR_RED_BOTTLE_COUNT))
@@ -825,6 +984,7 @@ function closeRoom(room, reason) {
   if (!rooms.has(room.code)) return
   clearGameTimer(room)
   clearInstructionTimer(room)
+  room.intermission = null
   for (const player of roomPlayers(room)) {
     clearDisconnect(room, player.id)
     send(sockets.get(player.id), { type: 'room_closed', reason })
@@ -850,6 +1010,7 @@ function completeReactionGame(room, survivors) {
   game.target = null
   game.lastResult = null
   game.winnerId = survivors.length === 1 ? survivors[0] : null
+  finalizeTournamentGame(room, game)
   broadcastRoom(room, 'game_state')
   scheduleNextGame(room)
 }
@@ -874,13 +1035,15 @@ function removeReactionPlayer(room, clientId) {
   }
 
   if (game.phase === 'round_result') {
-    if (game.round >= REACTION_TIME_ROUNDS) {
+    if (game.round >= game.maxRounds) {
       completeReactionGame(room, survivors)
       return true
     }
     game.round += 1
     game.turnIndex = 0
     game.results = []
+    game.leaderboard.forEach((entry) => { entry.reactionTime = null })
+    sortReactionLeaderboard(game)
     game.eliminatedPlayerId = null
     setReactionTurn(room)
     return true
@@ -961,6 +1124,7 @@ function markDisconnected(room, clientId) {
   match.player.connected = false
   broadcastRoom(room)
   maybeStartSelectedGame(room)
+  maybeAdvanceIntermission(room)
   clearDisconnect(room, clientId)
   room.disconnectTimers.set(clientId, setTimeout(() => {
     if (!rooms.has(room.code)) return
@@ -982,6 +1146,7 @@ function createRoom(clientId) {
     code: createCode(),
     hostId: clientId,
     mode: 'Free For All',
+    format: 'Elimination',
     maxGames: 5,
     manualGames: false,
     selectedGames: [],
@@ -990,6 +1155,7 @@ function createRoom(clientId) {
     gameQueue: [],
     gameIndex: 0,
     instructions: null,
+    intermission: null,
     instructionTimer: null,
     revision: 0,
     nextBotId: 1,
@@ -1096,10 +1262,11 @@ wss.on('connection', (socket) => {
     if (message.type === 'update_settings') {
       if (room.hostId !== clientId) return reject(socket, 'Only the host can change room settings.')
       if (room.phase !== 'lobby') return reject(socket, 'Settings can only be changed in the lobby.')
-      if (!ROOM_MODES.has(message.mode) || !MAX_GAMES.has(Number(message.maxGames))) {
+      if (!ROOM_MODES.has(message.mode) || !MAX_GAMES.has(Number(message.maxGames)) || !TOURNAMENT_FORMATS.has(message.format)) {
         return reject(socket, 'Unsupported room settings.')
       }
       room.mode = message.mode
+      room.format = message.format
       room.maxGames = Number(message.maxGames)
       room.selectedGames = room.selectedGames.slice(0, room.maxGames)
       return broadcastRoom(room)
@@ -1157,6 +1324,20 @@ wss.on('connection', (socket) => {
       }
       return
     }
+    if (message.type === 'skip_intermission') {
+      if (room.phase !== 'intermission' || !room.intermission) {
+        return reject(socket, 'There is no post-game leaderboard to skip.')
+      }
+      if (member.player.bot || !member.player.connected) {
+        return reject(socket, 'Only active human players can continue.')
+      }
+      if (room.intermission.acknowledgedPlayerIds.has(clientId)) {
+        return reject(socket, 'You have already chosen to continue.')
+      }
+      room.intermission.acknowledgedPlayerIds.add(clientId)
+      if (!maybeAdvanceIntermission(room)) broadcastRoom(room)
+      return
+    }
     if (message.type === 'close_instructions') {
       if (room.phase !== 'instructions' || !room.instructions) {
         return reject(socket, 'There are no instructions to close.')
@@ -1188,6 +1369,7 @@ wss.on('connection', (socket) => {
         : randomGameQueue(room.maxGames)
       if (!room.gameQueue.length) room.gameQueue = randomGameQueue(room.maxGames)
       room.gameIndex = 0
+      createTournament(room)
       if (!beginInstructions(room)) return reject(socket, 'Could not load instructions for the selected game.')
       return
     }

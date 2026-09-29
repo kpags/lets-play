@@ -7,7 +7,19 @@
         "minimum_players": 4,
         "win_condition": "Highest reaction time per round.",
         "lose_condition": "Lowest reaction time per round.",
-        "max_eliminations_per_round": 1
+        "max_eliminations_per_round": 1,
+        "points_allocation": {
+            "1": 25,
+            "2": 22,
+            "3": 20,
+            "4": 18,
+            "5": 16,
+            "6": 14,
+            "7": 12,
+            "8": 10,
+            "9": 8,
+            "10": 6
+        }
     },
     {
         "name": "Guess The Time",
@@ -17,7 +29,19 @@
         "minimum_players": 4,
         "win_condition": "Closest guess to the actual time throughout 3 rounds.",
         "lose_condition": "Furthest guess from the actual time throughout 3 rounds.",
-        "max_eliminations_per_round": 1
+        "max_eliminations_per_round": 1,
+        "points_allocation": {
+            "1": 25,
+            "2": 22,
+            "3": 20,
+            "4": 18,
+            "5": 16,
+            "6": 14,
+            "7": 12,
+            "8": 10,
+            "9": 8,
+            "10": 6
+        }
     },
     {
         "id": "impostor_color",
@@ -27,7 +51,11 @@
         "minimum_players": 2,
         "win_condition": "Avoid choosing the red colored bottle",
         "lose_condition": "The one who chooses the red colored bottle.",
-        "max_eliminations_per_round": 2
+        "max_eliminations_per_round": 2,
+        "points_allocation": {
+            "retained": 10,
+            "eliminated": 5
+        }
     },
     {
         "id": "word_memory_challenge",
@@ -37,7 +65,11 @@
         "minimum_players": 4,
         "win_condition": "Correctly recall the target word throughout the 3 rounds.",
         "lose_condition": "Incorrectly recall the target word in a round.",
-        "max_eliminations_per_round": 10
+        "max_eliminations_per_round": 10,
+        "points_allocation": {
+            "retained": 10,
+            "eliminated": 5
+        }
     },
     {
         "id": "avoid_similar_answer",
@@ -47,7 +79,11 @@
         "minimum_players": 2,
         "win_condition": "Successfully avoid giving the same answer as the game's answer throughout the 3 rounds.",
         "lose_condition": "Give the same answer as the game's answer in a round, wrong, or no answer.",
-        "max_eliminations_per_round": 1
+        "max_eliminations_per_round": 1,
+        "points_allocation": {
+            "retained": 5,
+            "eliminated": 2
+        }
     },
     {
         "id": "full_water",
@@ -57,7 +93,11 @@
         "minimum_players": 2,
         "win_condition": "Successfully fill the container without exceeding the maximum limit.",
         "lose_condition": "Exceeds the maximum 1 Liter of the container.",
-        "max_eliminations_per_round": 1
+        "max_eliminations_per_round": 1,
+        "points_allocation": {
+            "retained": 5,
+            "eliminated": 2
+        }
     },
     {
         "id": "type_it",
@@ -67,7 +107,11 @@
         "minimum_players": 2,
         "win_condition": "Successfully type the given phrase accurately within the time limit throughout the 3 rounds.",
         "lose_condition": "Fail to finish typing the given phrase within the time limit in a round.",
-        "max_eliminations_per_round": 1
+        "max_eliminations_per_round": 1,
+        "points_allocation": {
+            "retained": 20,
+            "eliminated": 8
+        }
     },
     {
         "id": "impostor",
@@ -77,6 +121,16 @@
         "minimum_players": 3,
         "win_condition": "Remain in the game throughout the 3 rounds.",
         "lose_condition": "Get kicked in a round.",
-        "max_eliminations_per_round": 1
+        "max_eliminations_per_round": 1,
+        "points_allocation": {
+            "impostor": {
+                "retained": 5,
+                "kicked": 2
+            },
+            "legit": {
+                "kicked_impostor": 5,
+                "failed_to_kick_impostor": 2
+            }
+        }
     }
 ]

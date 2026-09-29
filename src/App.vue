@@ -26,6 +26,7 @@ const joiningFromInviteDialog = ref(false)
 const inviteCode = ref(createInviteCode())
 const copyLabel = ref('Copy')
 const roomMode = ref('Free For All')
+const roomFormat = ref('Elimination')
 const maxGames = ref('5')
 const teamOne = ref([{ id: 'host', name: 'Host', ready: false }, null, null, null, null])
 const teamTwo = ref([null, null, null, null, null])
@@ -60,6 +61,9 @@ const canStartGame = computed(() => {
 })
 const selectedGameCount = computed(() => selectedGames.value.length)
 const gameChooserIsReadOnly = computed(() => !isRoomHost.value || !roomIsLobby.value)
+const isRankingFormat = computed(() => onlineRoom.value?.tournament?.format === 'Ranking')
+const tournamentPoints = (playerId) => onlineRoom.value?.tournament?.standings
+  ?.find((player) => player.playerId === playerId)?.points ?? 0
 const gameInstructions = computed(() => onlineRoom.value?.phase === 'instructions' ? onlineRoom.value.instructions : null)
 const instructionCountdown = computed(() => {
   if (!gameInstructions.value?.endsAt) return 0
@@ -69,6 +73,41 @@ const instructionCountdown = computed(() => {
 const instructionsClosedByMe = computed(() =>
   gameInstructions.value?.acknowledgedPlayerIds?.includes(clientId) ?? false,
 )
+const gameIntermission = computed(() => onlineRoom.value?.phase === 'intermission' ? onlineRoom.value.intermission : null)
+const intermissionCountdown = computed(() => {
+  if (!gameIntermission.value?.endsAt) return 0
+  const serverNow = reactionClockNow.value + reactionServerClockOffset.value
+  return Math.max(0, Math.ceil((gameIntermission.value.endsAt - serverNow) / 1000))
+})
+const intermissionSkippedByMe = computed(() =>
+  gameIntermission.value?.acknowledgedPlayerIds?.includes(clientId) ?? false,
+)
+const isTournamentSpectator = computed(() =>
+  onlineRoom.value?.tournament?.format === 'Elimination'
+  && onlineRoom.value.tournament.eliminatedIds.includes(clientId),
+)
+const showTournamentPodium = computed(() =>
+  Boolean(onlineRoom.value?.tournament?.complete && !gameInstructions.value && !gameIntermission.value),
+)
+const podiumElapsed = computed(() => {
+  if (!onlineRoom.value?.tournament?.completedAt) return 0
+  const serverNow = reactionClockNow.value + reactionServerClockOffset.value
+  return Math.max(0, serverNow - onlineRoom.value.tournament.completedAt)
+})
+const rankingPodiumGroups = computed(() => {
+  const standings = onlineRoom.value?.tournament?.standings || []
+  return [
+    { title: 'Winners Podium', players: standings.slice(0, 3) },
+    { title: 'Almost Winners Podium', players: standings.slice(3, 5) },
+    { title: 'NT Podium', players: standings.slice(5, 8) },
+    { title: 'ROFL Podium', players: standings.slice(8, 10) },
+  ]
+})
+const rankingPodiumStage = computed(() => Math.min(4, Math.floor(podiumElapsed.value / 1_500) + 1))
+const podiumExitAvailable = computed(() => {
+  if (onlineRoom.value?.tournament?.format === 'Ranking') return rankingPodiumStage.value >= 4
+  return podiumElapsed.value >= 1_500
+})
 const reactionPreparationCountdown = computed(() => {
   if (reactionGame.value?.phase !== 'preparing' || !reactionGame.value.phaseEndsAt) return null
   const serverNow = reactionClockNow.value + reactionServerClockOffset.value
@@ -84,7 +123,7 @@ const reactionTargetVisible = computed(() => {
   return reactionGame.value.activePlayerId !== clientId || !reactionClickSubmitted.value
 })
 const reactionTargetInteractive = computed(() =>
-  reactionGame.value?.phase === 'target' && reactionGame.value.activePlayerId === clientId && !showReactionMenu.value,
+  reactionGame.value?.phase === 'target' && reactionGame.value.activePlayerId === clientId && !isTournamentSpectator.value && !showReactionMenu.value,
 )
 const reactionResultVisible = computed(() => reactionGame.value?.phase === 'result')
 const guessTimeGame = computed(() => reactionGame.value?.id === 'guess_the_time' ? reactionGame.value : null)
@@ -96,6 +135,7 @@ const impostorSelectedBottle = computed(() => {
 const canPickImpostorBottle = computed(() =>
   impostorColorGame.value?.phase === 'picking'
   && impostorColorGame.value.currentPlayerId === clientId
+  && !isTournamentSpectator.value
   && !showReactionMenu.value,
 )
 const impostorPickCountdown = computed(() => {
@@ -133,7 +173,7 @@ const guessStatus = computed(() => {
   if (game.phase === 'running') return 'Watch the stopwatch closely.'
   if (game.phase === 'guessing') return guessInputLocked.value ? 'Your guess is locked.' : 'Enter the time when the stopwatch stopped.'
   if (game.phase === 'reveal_wait') return 'All answers are locked.'
-  if (game.phase === 'round_result') return `${game.eliminatedPlayerName} was farthest from the correct time.`
+  if (game.phase === 'round_result') return isRankingFormat.value ? 'Round complete.' : `${game.eliminatedPlayerName} was farthest from the correct time.`
   if (game.phase === 'complete') return game.winnerName ? `${game.winnerName} wins!` : 'Guess The Time complete!'
   return ''
 })
@@ -141,7 +181,7 @@ const reactionStatus = computed(() => {
   const game = reactionGame.value
   if (!game) return ''
   if (game.phase === 'complete') return game.winnerName ? `${game.winnerName} wins!` : 'Reaction Time complete!'
-  if (game.phase === 'round_result') return `${game.eliminatedPlayerName} was eliminated for the slowest reaction.`
+  if (game.phase === 'round_result') return isRankingFormat.value ? 'Round complete.' : `${game.eliminatedPlayerName} was eliminated for the slowest reaction.`
   if (game.phase === 'result') return `${game.lastResult?.playerName} reacted in ${game.lastResult?.reactionTime} ms.`
   if (game.activePlayerId === clientId) {
     if (game.phase === 'waiting') return 'Wait for green circle'
@@ -221,6 +261,7 @@ function applyRoomSnapshot(room, serverNow) {
   if (room.game?.id !== 'guess_the_time' || room.game.phase !== 'guessing') guessInput.value = ''
   inviteCode.value = room.code
   roomMode.value = room.mode
+  roomFormat.value = room.format
   maxGames.value = String(room.maxGames)
   manualGames.value = Boolean(room.manualGames)
   selectedGames.value = room.selectedGames || []
@@ -331,7 +372,7 @@ async function joinOnlineRoom(code, fromInviteDialog = false) {
 }
 
 function updateRoomSettings() {
-  sendRoom({ type: 'update_settings', mode: roomMode.value, maxGames: Number(maxGames.value) })
+  sendRoom({ type: 'update_settings', mode: roomMode.value, format: roomFormat.value, maxGames: Number(maxGames.value) })
 }
 
 function updateManualGames() {
@@ -400,6 +441,7 @@ const toggleReady = () => sendRoom({ type: 'toggle_ready' })
 const addBot = (group, index) => sendRoom({ type: 'add_bot', group, index })
 const kickPlayer = (player) => sendRoom({ type: 'kick_player', playerId: player.id })
 const closeInstructions = () => sendRoom({ type: 'close_instructions' })
+const skipIntermission = () => sendRoom({ type: 'skip_intermission' })
 const pickImpostorBottle = (bottleIndex) => sendRoom({ type: 'impostor_color_pick', bottleIndex })
 const recordReaction = () => {
   if (!reactionTargetInteractive.value) return
@@ -466,6 +508,7 @@ const renderGameToText = () =>
     ...(currentView.value === 'room' && {
       inviteCode: inviteCode.value,
       mode: roomMode.value,
+      format: roomFormat.value,
       maxGames: Number(maxGames.value),
       manualGames: manualGames.value,
       selectedGames: selectedGames.value,
@@ -477,6 +520,13 @@ const renderGameToText = () =>
           game: gameInstructions.value.game,
           secondsRemaining: instructionCountdown.value,
           closedByMe: instructionsClosedByMe.value,
+        },
+      }),
+      ...(gameIntermission.value && {
+        intermission: {
+          secondsRemaining: intermissionCountdown.value,
+          continuedByMe: intermissionSkippedByMe.value,
+          standings: onlineRoom.value?.tournament?.standings,
         },
       }),
     }),
@@ -683,7 +733,8 @@ onBeforeUnmount(() => {
         >
           <span class="reaction-leaderboard__rank">{{ entry.rank }}</span>
           <strong>{{ entry.playerName }}</strong>
-          <span>{{ entry.eliminated ? `Out · ${entry.reactionTime ?? '—'} ms` : entry.reactionTime === null ? 'Waiting' : `${entry.reactionTime} ms` }}</span>
+          <span>{{ entry.eliminated ? 'Out' : entry.reactionTime === null ? 'Waiting' : `${entry.reactionTime} ms` }}</span>
+          <small v-if="isRankingFormat">{{ tournamentPoints(entry.playerId) }} pts</small>
         </article>
       </TransitionGroup>
     </section>
@@ -729,7 +780,7 @@ onBeforeUnmount(() => {
         <span class="guess-stopwatch__time">{{ guessStopwatchDisplay }}</span>
       </div>
 
-      <form v-if="guessTimeGame?.phase === 'guessing' && !guessTimeGame.eliminatedIds.includes(clientId)" class="guess-time-form" @submit.prevent="submitTimeGuess">
+      <form v-if="guessTimeGame?.phase === 'guessing' && !guessTimeGame.eliminatedIds.includes(clientId) && !isTournamentSpectator" class="guess-time-form" @submit.prevent="submitTimeGuess">
         <label for="guess-time-input">Your guess</label>
         <div>
           <input
@@ -760,6 +811,7 @@ onBeforeUnmount(() => {
             {{ entry.guess === null ? 'No guess' : `${entry.guess.toFixed(2)} s` }}
           </span>
           <span v-else>{{ guessTimeGame?.guessedPlayerIds.includes(entry.playerId) ? 'Locked' : 'Waiting' }}</span>
+          <small v-if="isRankingFormat">{{ tournamentPoints(entry.playerId) }} pts</small>
         </article>
       </TransitionGroup>
     </section>
@@ -847,6 +899,7 @@ onBeforeUnmount(() => {
         >
           <strong>{{ player.playerName }}</strong>
           <span>{{ player.eliminated ? 'Out' : player.playerId === impostorColorGame?.currentPlayerId ? 'Choosing' : 'Safe' }}</span>
+          <small v-if="isRankingFormat">{{ tournamentPoints(player.playerId) }} pts</small>
         </article>
       </section>
     </section>
@@ -891,6 +944,14 @@ onBeforeUnmount(() => {
             <option>5</option>
             <option>8</option>
             <option>10</option>
+          </select>
+        </label>
+
+        <label class="room-field">
+          <span class="room-field__label">Format</span>
+          <select v-model="roomFormat" :disabled="!isRoomHost || !roomIsLobby" @change="updateRoomSettings">
+            <option>Elimination</option>
+            <option>Ranking</option>
           </select>
         </label>
 
@@ -1046,6 +1107,61 @@ onBeforeUnmount(() => {
       >
         {{ instructionsClosedByMe ? 'Waiting for players…' : 'Close instructions' }}
       </button>
+    </section>
+  </div>
+
+  <div v-if="gameIntermission" class="instructions-dialog__overlay">
+    <section class="instructions-dialog intermission-dialog" role="dialog" aria-modal="true" aria-labelledby="intermission-dialog-title">
+      <p class="instructions-dialog__eyebrow">Game complete</p>
+      <h2 id="intermission-dialog-title">Leaderboard</h2>
+      <ol class="intermission-dialog__standings">
+        <li
+          v-for="(player, index) in onlineRoom?.tournament?.standings || []"
+          :key="player.playerId"
+          :class="{ 'intermission-dialog__player--eliminated': roomFormat === 'Elimination' && player.eliminated }"
+        >
+          <strong>{{ index + 1 }}. {{ player.playerName }}</strong>
+          <span>{{ roomFormat === 'Ranking' ? `${player.points} pts` : player.eliminated ? 'Eliminated' : 'Active' }}</span>
+        </li>
+      </ol>
+      <p class="instructions-dialog__countdown" aria-live="polite">
+        Next game starts in {{ intermissionCountdown }} second{{ intermissionCountdown === 1 ? '' : 's' }}.
+      </p>
+      <button class="room-action instructions-dialog__close" type="button" :disabled="intermissionSkippedByMe" @click="skipIntermission">
+        {{ intermissionSkippedByMe ? 'Waiting for playersâ€¦' : 'Go to next game' }}
+      </button>
+    </section>
+  </div>
+
+  <div v-if="showTournamentPodium" class="instructions-dialog__overlay podium-overlay">
+    <section class="instructions-dialog podium-dialog" role="dialog" aria-modal="true" aria-labelledby="podium-dialog-title">
+      <template v-if="roomFormat === 'Elimination'">
+        <p class="instructions-dialog__eyebrow">Tournament complete</p>
+        <h2 id="podium-dialog-title">The Last Man Standing is</h2>
+        <p v-if="podiumElapsed >= 1_500" class="podium-dialog__winner">{{ onlineRoom?.tournament?.winnerName }}</p>
+        <div v-if="podiumElapsed >= 1_500" class="podium-confetti" aria-hidden="true"><i v-for="index in 18" :key="index"></i></div>
+      </template>
+
+      <template v-else>
+        <p class="instructions-dialog__eyebrow">Tournament complete</p>
+        <h2 id="podium-dialog-title">Final Podiums</h2>
+        <section
+          v-for="(group, groupIndex) in rankingPodiumGroups"
+          v-show="groupIndex < rankingPodiumStage"
+          :key="group.title"
+          class="podium-dialog__group"
+          :class="{ 'podium-dialog__group--winners': groupIndex === 0 }"
+        >
+          <h3>{{ group.title }}</h3>
+          <ol>
+            <li v-for="player in group.players" :key="player.playerId"><strong>{{ player.playerName }}</strong><span>{{ player.points }} pts</span></li>
+            <li v-if="!group.players.length" class="podium-dialog__empty">No players</li>
+          </ol>
+          <div v-if="groupIndex === 0" class="podium-confetti" aria-hidden="true"><i v-for="index in 18" :key="index"></i></div>
+        </section>
+      </template>
+
+      <button v-if="podiumExitAvailable" class="room-action instructions-dialog__close" type="button" @click="exitRoom">Exit</button>
     </section>
   </div>
 </template>
