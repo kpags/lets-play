@@ -18,6 +18,7 @@ const GUESS_TIME_REVEAL_DELAY_MS = 3_000
 const GUESS_TIME_RESULT_MS = 3_000
 const GUESS_TIME_MIN_CENTISECONDS = 100
 const GUESS_TIME_MAX_CENTISECONDS = 1_099
+const INSTRUCTION_DURATION_MS = 30_000
 const GAME_CATALOG = JSON.parse(readFileSync(new URL('../data/games/free_for_all.json', import.meta.url), 'utf8'))
 const GAME_IDS = new Set(GAME_CATALOG.map((game) => game.id))
 const DEFAULT_PLAYER_NAMES = [
@@ -99,6 +100,11 @@ function roomView(room) {
     manualGames: room.manualGames,
     selectedGames: room.selectedGames,
     phase: room.phase,
+    instructions: room.instructions && {
+      game: room.instructions.game,
+      endsAt: room.instructions.endsAt,
+      acknowledgedPlayerIds: [...room.instructions.acknowledgedPlayerIds],
+    },
     game: room.game ? gameView(room) : null,
     slots: Object.fromEntries(SLOT_GROUPS.map((group) => [
       group,
@@ -208,6 +214,62 @@ function clearGameTimer(room) {
   for (const timer of room.game?.botTimers || []) clearTimeout(timer)
   if (room.game) room.game.timer = null
   if (room.game) room.game.botTimers = []
+}
+
+function clearInstructionTimer(room) {
+  if (room.instructionTimer) clearTimeout(room.instructionTimer)
+  room.instructionTimer = null
+}
+
+function selectedGame(room) {
+  const gameId = room.manualGames && room.selectedGames.includes('guess_the_time')
+    ? 'guess_the_time'
+    : 'reaction_time'
+  return GAME_CATALOG.find((game) => game.id === gameId)
+}
+
+function requiredInstructionPlayers(room) {
+  return roomPlayers(room).filter((player) => !player.bot && player.connected)
+}
+
+function startSelectedGame(room) {
+  if (!rooms.has(room.code) || room.phase !== 'instructions' || !room.instructions) return
+  const gameId = room.instructions.game.id
+  clearInstructionTimer(room)
+  room.instructions = null
+  room.phase = 'playing'
+  if (gameId === 'guess_the_time') return startGuessTimeGame(room)
+  startReactionTimeGame(room)
+}
+
+function maybeStartSelectedGame(room) {
+  if (room.phase !== 'instructions' || !room.instructions) return false
+  const allAcknowledged = requiredInstructionPlayers(room)
+    .every((player) => room.instructions.acknowledgedPlayerIds.has(player.id))
+  if (!allAcknowledged) return false
+  startSelectedGame(room)
+  return true
+}
+
+function beginInstructions(room) {
+  const game = selectedGame(room)
+  if (!game) return false
+  room.phase = 'instructions'
+  room.game = null
+  room.instructions = {
+    game: {
+      id: game.id,
+      name: game.name,
+      description: game.description,
+      winCondition: game.win_condition,
+      loseCondition: game.lose_condition,
+    },
+    endsAt: Date.now() + INSTRUCTION_DURATION_MS,
+    acknowledgedPlayerIds: new Set(roomPlayers(room).filter((player) => player.bot).map((player) => player.id)),
+  }
+  room.instructionTimer = setTimeout(() => startSelectedGame(room), INSTRUCTION_DURATION_MS)
+  broadcastRoom(room)
+  return true
 }
 
 function scheduleGame(room, delay, callback) {
@@ -506,6 +568,7 @@ function clearDisconnect(room, clientId) {
 function closeRoom(room, reason) {
   if (!rooms.has(room.code)) return
   clearGameTimer(room)
+  clearInstructionTimer(room)
   for (const player of roomPlayers(room)) {
     clearDisconnect(room, player.id)
     send(sockets.get(player.id), { type: 'room_closed', reason })
@@ -613,6 +676,7 @@ function markDisconnected(room, clientId) {
   if (!match) return
   match.player.connected = false
   broadcastRoom(room)
+  maybeStartSelectedGame(room)
   clearDisconnect(room, clientId)
   room.disconnectTimers.set(clientId, setTimeout(() => {
     if (!rooms.has(room.code)) return
@@ -639,6 +703,8 @@ function createRoom(clientId) {
     selectedGames: [],
     phase: 'lobby',
     game: null,
+    instructions: null,
+    instructionTimer: null,
     revision: 0,
     nextBotId: 1,
     slots: { one: emptySlots(), two: emptySlots() },
@@ -798,6 +864,20 @@ wss.on('connection', (socket) => {
       }
       return
     }
+    if (message.type === 'close_instructions') {
+      if (room.phase !== 'instructions' || !room.instructions) {
+        return reject(socket, 'There are no instructions to close.')
+      }
+      if (member.player.bot || !member.player.connected) {
+        return reject(socket, 'Only active human players can close instructions.')
+      }
+      if (room.instructions.acknowledgedPlayerIds.has(clientId)) {
+        return reject(socket, 'You have already closed the instructions.')
+      }
+      room.instructions.acknowledgedPlayerIds.add(clientId)
+      if (!maybeStartSelectedGame(room)) broadcastRoom(room)
+      return
+    }
     if (message.type === 'start_game') {
       if (room.hostId !== clientId) return reject(socket, 'Only the host can start the game.')
       const players = roomPlayers(room)
@@ -810,9 +890,8 @@ wss.on('connection', (socket) => {
       } else if (players.length < 2) {
         return reject(socket, 'At least two players are needed to start.')
       }
-      room.phase = 'playing'
-      if (room.manualGames && room.selectedGames.includes('guess_the_time')) return startGuessTimeGame(room)
-      return startReactionTimeGame(room)
+      if (!beginInstructions(room)) return reject(socket, 'Could not load instructions for the selected game.')
+      return
     }
     reject(socket, 'Unsupported room action.')
   })

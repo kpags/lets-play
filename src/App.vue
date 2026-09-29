@@ -60,6 +60,15 @@ const canStartGame = computed(() => {
 })
 const selectedGameCount = computed(() => selectedGames.value.length)
 const gameChooserIsReadOnly = computed(() => !isRoomHost.value || !roomIsLobby.value)
+const gameInstructions = computed(() => onlineRoom.value?.phase === 'instructions' ? onlineRoom.value.instructions : null)
+const instructionCountdown = computed(() => {
+  if (!gameInstructions.value?.endsAt) return 0
+  const serverNow = reactionClockNow.value + reactionServerClockOffset.value
+  return Math.max(0, Math.ceil((gameInstructions.value.endsAt - serverNow) / 1000))
+})
+const instructionsClosedByMe = computed(() =>
+  gameInstructions.value?.acknowledgedPlayerIds?.includes(clientId) ?? false,
+)
 const reactionPreparationCountdown = computed(() => {
   if (reactionGame.value?.phase !== 'preparing' || !reactionGame.value.phaseEndsAt) return null
   const serverNow = reactionClockNow.value + reactionServerClockOffset.value
@@ -360,6 +369,7 @@ const copyInviteCode = async () => {
 const toggleReady = () => sendRoom({ type: 'toggle_ready' })
 const addBot = (group, index) => sendRoom({ type: 'add_bot', group, index })
 const kickPlayer = (player) => sendRoom({ type: 'kick_player', playerId: player.id })
+const closeInstructions = () => sendRoom({ type: 'close_instructions' })
 const recordReaction = () => {
   if (!reactionTargetInteractive.value) return
   reactionClickSubmitted.value = true
@@ -431,6 +441,13 @@ const renderGameToText = () =>
       playerCount: playerCount.value,
       teamOne: teamOne.value.map((player) => (player ? { name: player.name, ready: player.ready, bot: player.bot } : null)),
       teamTwo: teamTwo.value.map((player) => (player ? { name: player.name, ready: player.ready, bot: player.bot } : null)),
+      ...(gameInstructions.value && {
+        instructions: {
+          game: gameInstructions.value.game,
+          secondsRemaining: instructionCountdown.value,
+          closedByMe: instructionsClosedByMe.value,
+        },
+      }),
     }),
     ...(currentView.value === 'reaction' && reactionGame.value && {
       game: {
@@ -560,7 +577,7 @@ onBeforeUnmount(() => {
     </section>
   </main>
 
-  <main v-else-if="currentView === 'reaction'" class="reaction-page" aria-labelledby="reaction-title">
+  <main v-else-if="currentView === 'reaction' || gameInstructions?.game?.id === 'reaction_time'" class="reaction-page" aria-labelledby="reaction-title">
     <header class="reaction-page__header">
       <button
         class="reaction-menu-trigger"
@@ -630,7 +647,7 @@ onBeforeUnmount(() => {
     </section>
   </main>
 
-  <main v-else-if="currentView === 'guess-time'" class="reaction-page guess-time-page" aria-labelledby="guess-time-title">
+  <main v-else-if="currentView === 'guess-time' || gameInstructions?.game?.id === 'guess_the_time'" class="reaction-page guess-time-page" aria-labelledby="guess-time-title">
     <header class="reaction-page__header">
       <button
         class="reaction-menu-trigger"
@@ -871,5 +888,35 @@ onBeforeUnmount(() => {
         </div>
       </section>
     </div>
+
   </main>
+
+  <div v-if="gameInstructions" class="instructions-dialog__overlay">
+    <section
+      class="instructions-dialog"
+      role="dialog"
+      aria-modal="true"
+      aria-labelledby="instructions-dialog-title"
+      aria-describedby="instructions-dialog-summary"
+    >
+      <p class="instructions-dialog__eyebrow">Get ready to play</p>
+      <h2 id="instructions-dialog-title">{{ gameInstructions.game.name }}</h2>
+      <ul id="instructions-dialog-summary" class="instructions-dialog__list">
+        <li><strong>Description:</strong> {{ gameInstructions.game.description }}</li>
+        <li><strong>Win condition:</strong> {{ gameInstructions.game.winCondition }}</li>
+        <li><strong>Lose condition:</strong> {{ gameInstructions.game.loseCondition }}</li>
+      </ul>
+      <p class="instructions-dialog__countdown" aria-live="polite">
+        Game starts in {{ instructionCountdown }} second{{ instructionCountdown === 1 ? '' : 's' }}.
+      </p>
+      <button
+        class="room-action instructions-dialog__close"
+        type="button"
+        :disabled="instructionsClosedByMe"
+        @click="closeInstructions"
+      >
+        {{ instructionsClosedByMe ? 'Waiting for players…' : 'Close instructions' }}
+      </button>
+    </section>
+  </div>
 </template>

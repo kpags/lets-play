@@ -1582,6 +1582,73 @@ button {
   border: 0;
 }
 
+.instructions-dialog__overlay {
+  position: fixed;
+  z-index: 30;
+  inset: 0;
+  display: grid;
+  place-items: center;
+  padding: 1.25rem;
+  background: rgb(2 27 45 / 0.58);
+  backdrop-filter: blur(6px);
+}
+
+.instructions-dialog {
+  width: min(100%, 34rem);
+  border: 1px solid rgb(255 255 255 / 0.78);
+  border-radius: 1.5rem;
+  padding: clamp(1.35rem, 4vw, 2.1rem);
+  color: #f8fdff;
+  background: linear-gradient(145deg, rgb(43 91 119 / 0.96), rgb(25 54 76 / 0.95));
+  box-shadow: inset 0 1px rgb(255 255 255 / 0.5), 0 1.2rem 2.8rem rgb(3 37 59 / 0.65);
+}
+
+.instructions-dialog__eyebrow,
+.instructions-dialog h2,
+.instructions-dialog__countdown {
+  margin: 0;
+}
+
+.instructions-dialog__eyebrow {
+  color: #eaffad;
+  font-size: 0.78rem;
+  font-weight: 900;
+  letter-spacing: 0.11em;
+  text-transform: uppercase;
+}
+
+.instructions-dialog h2 {
+  margin-top: 0.35rem;
+  font-family: "Arial Rounded MT Bold", "Trebuchet MS", sans-serif;
+  font-size: clamp(1.65rem, 6vw, 2.35rem);
+}
+
+.instructions-dialog__list {
+  display: grid;
+  gap: 0.8rem;
+  margin: 1.25rem 0;
+  padding-left: 1.25rem;
+  line-height: 1.4;
+}
+
+.instructions-dialog__list strong {
+  color: #eaffad;
+}
+
+.instructions-dialog__countdown {
+  color: rgb(238 251 255 / 0.88);
+  font-size: 0.9rem;
+  font-weight: 800;
+}
+
+.instructions-dialog__close {
+  width: 100%;
+  margin-top: 1.1rem;
+  padding: 0.75rem 1rem;
+  color: #063f25;
+  background: linear-gradient(145deg, #baff8ee0, #1fa842d1);
+}
+
 @media (max-width: 700px), (orientation: portrait) {
   .settings-page {
     display: block;
