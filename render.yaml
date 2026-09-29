@@ -1,0 +1,17 @@
+services:
+  - type: web
+    name: lets-play-websocket
+    runtime: node
+    buildCommand: npm ci
+    startCommand: npm run server
+
+  - type: web
+    name: lets-play-frontend
+    runtime: static
+    buildCommand: npm ci && npm run build
+    staticPublishPath: ./dist
+    envVars:
+      # Set this to the WebSocket service's public URL, e.g.
+      # wss://lets-play-websocket.onrender.com
+      - key: VITE_WS_URL
+        sync: false
