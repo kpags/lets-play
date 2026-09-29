@@ -1,0 +1,82 @@
+[
+    {
+        "name": "Reaction Time",
+        "id": "reaction_time",
+        "description": "Test your reaction speed against other players.",
+        "rounds": 3,
+        "minimum_players": 4,
+        "win_condition": "Highest reaction time per round.",
+        "lose_condition": "Lowest reaction time per round.",
+        "max_eliminations_per_round": 1
+    },
+    {
+        "name": "Guess The Time",
+        "id": "guess_the_time",
+        "description": "Try to guess the time as accurately as possible.",
+        "rounds": 3,
+        "minimum_players": 4,
+        "win_condition": "Closest guess to the actual time throughout 3 rounds.",
+        "lose_condition": "Furthest guess from the actual time throughout 3 rounds.",
+        "max_eliminations_per_round": 1
+    },
+    {
+        "id": "impostor_color",
+        "name": "Impostor Color",
+        "description": "Out of 10 bottles, 9 are green and 1 is red.",
+        "rounds": 1,
+        "minimum_players": 2,
+        "win_condition": "Avoid choosing the red colored bottle",
+        "lose_condition": "The one who chooses the red colored bottle.",
+        "max_eliminations_per_round": 1
+    },
+    {
+        "id": "word_memory_challenge",
+        "name": "Word Memory Challenge",
+        "description": "Random number of words will be shown one by one and will ask the players what word was shown in a random order.",
+        "rounds": 3,
+        "minimum_players": 4,
+        "win_condition": "Correctly recall the target word throughout the 3 rounds.",
+        "lose_condition": "Incorrectly recall the target word in a round.",
+        "max_eliminations_per_round": 10
+    },
+    {
+        "id": "avoid_similar_answer",
+        "name": "Avoid Similar Answer",
+        "description": "A request will be shown and players will try to give their answers not equal to the game's answer.",
+        "rounds": 3,
+        "minimum_players": 2,
+        "win_condition": "Successfully avoid giving the same answer as the game's answer throughout the 3 rounds.",
+        "lose_condition": "Give the same answer as the game's answer in a round, wrong, or no answer.",
+        "max_eliminations_per_round": 1
+    },
+    {
+        "id": "full_water",
+        "name": "Full Water",
+        "description": "Each player will take turns to fill a maximum of 15 mL of water into a 1 Liter of empty container.",
+        "rounds": 1,
+        "minimum_players": 2,
+        "win_condition": "Successfully fill the container without exceeding the maximum limit.",
+        "lose_condition": "Exceeds the maximum 1 Liter of the container.",
+        "max_eliminations_per_round": 1
+    },
+    {
+        "id": "type_it",
+        "name": "Type It",
+        "description": "Players must type the given phrase as quickly and accurately as possible within the given time.",
+        "rounds": 3,
+        "minimum_players": 2,
+        "win_condition": "Successfully type the given phrase accurately within the time limit throughout the 3 rounds.",
+        "lose_condition": "Fail to finish typing the given phrase within the time limit in a round.",
+        "max_eliminations_per_round": 1
+    },
+    {
+        "id": "impostor",
+        "name": "Impostor",
+        "description": "All players except one will be given a similar word. All players will describe their word as obscure as possible. Every end of the round, all players will vote who they think is the impostor and kick them out of the game.",
+        "rounds": 3,
+        "minimum_players": 3,
+        "win_condition": "Remain in the game throughout the 3 rounds.",
+        "lose_condition": "Get kicked in a round.",
+        "max_eliminations_per_round": 1
+    }
+]

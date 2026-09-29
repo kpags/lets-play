@@ -1,0 +1,232 @@
+{
+    "word_memory_challenge": {
+        "round_1": [
+            "planet river coffee bright window tiger jump cloud pencil garden",
+            "river cloud pencil bright jump apple stone quick garden flame",
+            "river cloud spark gentle stone bright fox drift maple quick",
+            "forest quick orange jump silent river cloud bright stone happy",
+            "swift mango orbit quiet bridge pixel forest candle rocket velvet"
+        ],
+        "round_2": [
+            "river cloud pencil window bright garden quick stone yellow jump quiet table",
+            "apple train silver chair ocean happy mouse green bottle light paper road",
+            "winter lamp coffee bridge small tiger music glass purple dream house fast",
+            "planet bread circle forest lucky phone water black smile clock orange walk",
+            "camera grass morning book white rocket door simple rain jacket blue star"
+        ],
+        "round_3": [
+            "planet coffee window bright garden river pencil cloud jump silver basket quiet orange travel stone",
+            "river candle swift marble pocket gentle orbit window crisp thunder maple drift silver quiet lantern",
+            "river cloud gentle frame apple quick stone bright candle jump forest silver table quiet spark",
+            "river cloud pencil orbit mango silver jump quiet basket window tiger candle bright stone drift",
+            "harbor pixel lemon drift velvet comet jungle ripple cactus thunder maple orbit candle breeze rocket"
+        ]
+    },
+    "avoid_similar_answer": [
+        {
+            "request": "Name of a country that starts with letter D.",
+            "answers": [
+                "Denmark",
+                "Djibouti",
+                "Dominica",
+                "Dominican Republic",
+                "Democratic Republic of the Congo"
+            ]
+        },
+        {
+            "request": "A Chemical Element. Names only, not symbol",
+            "answers": [
+                "Carbon",
+                "Calcium",
+                "Cadmium",
+                "Cerium",
+                "Cesium",
+                "Chlorine",
+                "Chromium",
+                "Cobalt",
+                "Copernicium",
+                "Copper",
+                "Curium"
+            ]
+        },
+        {
+            "request": "Double digit number that when the two digits are added will result to odd number. Must be less than 20.",
+            "answers": [
+                "10",
+                "12",
+                "14",
+                "16",
+                "18"
+            ]
+        },
+        {
+            "request": "Single word that ends in 'sh'.",
+            "answers": [
+                "Brush",
+                "Crush",
+                "Flash",
+                "Fresh",
+                "Clash",
+                "Crash",
+                "Blush",
+                "Flush",
+                "Plush",
+                "Slash",
+                "Smash",
+                "Trash",
+                "Wish",
+                "Fish",
+                "Dish",
+                "Bush",
+                "Rush",
+                "Hush",
+                "Push",
+                "Gush",
+                "Mash",
+                "Cash",
+                "Dash",
+                "Hash",
+                "Lash",
+                "Mesh",
+                "Wash",
+                "Polish",
+                "Finish",
+                "Punish",
+                "Relish",
+                "Vanish",
+                "Parish",
+                "Radish",
+                "Foolish",
+                "Stylish",
+                "Boyish",
+                "Selfish",
+                "Ticklish",
+                "Childish",
+                "Feverish",
+                "Sluggish",
+                "Rubbish",
+                "Spanish",
+                "English",
+                "Turkish",
+                "Jewish",
+                "Scottish",
+                "Publish",
+                "Establish",
+                "Demolish",
+                "Replenish",
+                "Embellish",
+                "Accomplish",
+                "Extinguish",
+                "Distinguish",
+                "Flourish",
+                "Perish",
+                "Cherish",
+                "Nourish"
+            ]
+        },
+        {
+            "request": "Name of a planet in our solar system.",
+            "answers": [
+                "Mercury",
+                "Venus",
+                "Earth",
+                "Mars",
+                "Jupiter",
+                "Saturn",
+                "Uranus",
+                "Neptune"
+            ]
+        },
+        {
+            "request": "Name of a continent.",
+            "answers": [
+                "Asia",
+                "Africa",
+                "North America",
+                "South America",
+                "Antarctica",
+                "Europe",
+                "Australia"
+            ]
+        },
+        {
+            "request": "A color in the Philippine flag.",
+            "answers": [
+                "Blue",
+                "Red",
+                "White",
+                "Yellow"
+            ]
+        },
+        {
+            "request": "Color with single word only that starts with 'B'.",
+            "answers": [
+                "Blue",
+                "Black",
+                "Brown",
+                "Beige",
+                "Bronze",
+                "Burgundy",
+                "Blush",
+                "Buff",
+                "Brass",
+                "Berry",
+                "Bistre",
+                "Bone",
+                "Bisque",
+                "Bluebell",
+                "Blueberry"
+            ]
+        }
+    ],
+    "type_it": {
+        "round_1": [
+            "river candle orbit velvet lemon pocket mirror thunder garden pencil window coffee planet silver basket cloud engine meadow button lantern paper ocean feather jacket stone",
+            "silent river candle forest window gentle orbit pocket velvet thunder meadow orange ladder crystal breeze shadow marble lantern coffee planet winter button garden paper sunset",
+            "quiet river lantern apple velvet morning puzzle garden silver window coffee thunder pocket yellow forest candle bridge marble sunset feather rocket circle winter button shadow",
+            "tiger vines canopy river monkey bamboo parrot moss jaguar waterfall orchid python toucan jungle leaves mist roots fern leopard banana swamp beetle palm panther rainforest"
+        ],
+        "round_2": [
+            "Silent River jumps beneath Golden clouds while Clever foxes gather bright stones near Ancient trees and whisper Softly across Moonlit fields before Morning brings Wonder",
+            "Bright monkey jumps over Silent rivers while coding Dreams drift beyond purple mountains and Curious stars guide fearless Travelers through hidden valleys before Sunrise arrives",
+            "Bright river jumps softly beneath Crimson clouds while silver lanterns drift across quiet gardens and curious Tigers chase tiny echoes near Golden windows before sunrise",
+            "Crimson river Echo lantern Velvet orbit curious Falcon meadow Pixel thunder gentle Maple circuit amber Rocket whisper silver Canyon breeze Lunar garden copper Horizon spark"
+        ],
+        "round_3": [
+            "Quick1 brown Fox! jumps over 7lazy Dogs# while Code42 runs Smoothly under Neon$ skies Bright stars@ guide 3tiny Robots through Mystic valleys &Silent forests toward Home99 before Dawn? again! Today7",
+            "Rapid7 Moon! Pixel_42 jumps Over neon# skies while Code9 whispers Turbo$ dreams across 3am circuits BrightFox spins @ midnight and Quartz88 echoes through Silent-Waves beyond NodeX5 firewalls Today? Again! Z3bra",
+            "Bright7 moon! jumps over3 Silent# river while Zebra9 dances under Blue$ clouds and Tiny2 robots Sing@ loudly beside Golden8 trees as Night% winds carry Pixel4 dreams beyond Red& hills Today!",
+            "Swift7 Falcon! jumps Over9 silent_Rivers while Neon#42 clouds Drift gently Beyond3 ancient Walls@Night coding99 Sparks Brightly under Moon$5 chasing Echoes Through8 hidden Paths&Stars with Pixel2 Dreams"
+        ]
+    },
+    "impostor": [
+        {
+            "similar_word": "Swimming",
+            "impostor_word": "Rowing"
+        },
+        {
+            "similar_word": "Tiger",
+            "impostor_word": "Domestic Cat"
+        },
+        {
+            "similar_word": "Michael Jackson",
+            "impostor_word": "Michael Jordan"
+        },
+        {
+            "similar_word": "Chicken",
+            "impostor_word": "Turkey"
+        },
+        {
+            "similar_word": "Taylor Swift",
+            "impostor_word": "Rihanna"
+        },
+        {
+            "similar_word": "Blue",
+            "impostor_word": "Indigo"
+        },
+        {
+            "similar_word": "Tennis",
+            "impostor_word": "Pickleball"
+        }
+    ]
+}
