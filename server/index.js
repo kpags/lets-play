@@ -19,8 +19,20 @@ const GUESS_TIME_RESULT_MS = 3_000
 const GUESS_TIME_MIN_CENTISECONDS = 100
 const GUESS_TIME_MAX_CENTISECONDS = 1_099
 const INSTRUCTION_DURATION_MS = 30_000
+const IMPOSTOR_COLOR_BOTTLE_COUNT = 12
+const IMPOSTOR_COLOR_RED_BOTTLE_COUNT = 2
+const IMPOSTOR_COLOR_SHAKE_MS = 1_500
+const IMPOSTOR_COLOR_REVEAL_MS = 800
+const IMPOSTOR_COLOR_AWW_MS = 2_000
+const IMPOSTOR_COLOR_TURN_DELAY_MS = 500
+const IMPOSTOR_COLOR_PICK_MS = 5_000
+const IMPOSTOR_COLOR_WARNING_MS = 2_000
+const IMPOSTOR_COLOR_RETURN_MS = 500
+const IMPOSTOR_COLOR_FAREWELL_MS = 3_000
+const GAME_QUEUE_TRANSITION_MS = 3_000
 const GAME_CATALOG = JSON.parse(readFileSync(new URL('../data/games/free_for_all.json', import.meta.url), 'utf8'))
 const GAME_IDS = new Set(GAME_CATALOG.map((game) => game.id))
+const SUPPORTED_GAME_IDS = new Set(['reaction_time', 'guess_the_time', 'impostor_color'])
 const DEFAULT_PLAYER_NAMES = [
   'SkillIssue',
   'OopsIDied',
@@ -121,7 +133,43 @@ function roomView(room) {
 
 function gameView(room) {
   if (room.game.id === 'guess_the_time') return guessTimeGameView(room)
+  if (room.game.id === 'impostor_color') return impostorColorGameView(room)
   return reactionGameView(room)
+}
+
+function impostorColorGameView(room) {
+  const game = room.game
+  const playerById = new Map(roomPlayers(room).map((player) => [player.id, player]))
+  return {
+    id: game.id,
+    phase: game.phase,
+    phaseEndsAt: game.phaseEndsAt,
+    currentPlayerId: game.currentPlayerId,
+    currentPlayerName: playerById.get(game.currentPlayerId)?.name || '',
+    selectedBottleIndex: game.selectedBottleIndex,
+    bottles: game.bottles.map((bottle) => ({
+      index: bottle.index,
+      state: bottle.state,
+      color: bottle.state === 'revealed' ? bottle.color : null,
+      pickedById: bottle.pickedById,
+    })),
+    eliminatedIds: game.eliminatedIds,
+    eliminatedPlayerId: game.eliminatedPlayerId,
+    eliminatedPlayerName: playerById.get(game.eliminatedPlayerId)?.name || '',
+    winnerId: game.winnerId,
+    winnerName: playerById.get(game.winnerId)?.name || '',
+    warningCount: game.warningCounts.get(game.currentPlayerId) || 0,
+    farewellNames: game.eliminatedIds.map((playerId) => playerById.get(playerId)?.name).filter(Boolean),
+    redBottlesPicked: game.bottles.filter((bottle) => bottle.state === 'revealed' && bottle.color === 'red').length,
+    totalRedBottles: IMPOSTOR_COLOR_RED_BOTTLE_COUNT,
+    players: game.playerIds.map((playerId) => ({
+      playerId,
+      playerName: playerById.get(playerId)?.name || '',
+      eliminated: game.eliminatedIds.includes(playerId),
+      warningCount: game.warningCounts.get(playerId) || 0,
+      eliminatedByAfk: game.afkEliminatedIds.includes(playerId),
+    })),
+  }
 }
 
 function reactionGameView(room) {
@@ -222,10 +270,35 @@ function clearInstructionTimer(room) {
 }
 
 function selectedGame(room) {
-  const gameId = room.manualGames && room.selectedGames.includes('guess_the_time')
-    ? 'guess_the_time'
-    : 'reaction_time'
+  const gameId = room.gameQueue?.[room.gameIndex]
+    || (room.manualGames && room.selectedGames.includes('guess_the_time') ? 'guess_the_time' : 'reaction_time')
   return GAME_CATALOG.find((game) => game.id === gameId)
+}
+
+function randomGameQueue(maxGames) {
+  const queue = []
+  while (queue.length < maxGames) {
+    const round = [...SUPPORTED_GAME_IDS]
+    for (let index = round.length - 1; index > 0; index -= 1) {
+      const swapIndex = Math.floor(Math.random() * (index + 1))
+      ;[round[index], round[swapIndex]] = [round[swapIndex], round[index]]
+    }
+    queue.push(...round)
+  }
+  return queue.slice(0, maxGames)
+}
+
+function advanceGameQueue(room) {
+  if (room.gameIndex >= room.gameQueue.length - 1) return false
+  room.gameIndex += 1
+  beginInstructions(room)
+  return true
+}
+
+function scheduleNextGame(room) {
+  if (room.gameIndex >= room.gameQueue.length - 1) return false
+  scheduleGame(room, GAME_QUEUE_TRANSITION_MS, () => advanceGameQueue(room))
+  return true
 }
 
 function requiredInstructionPlayers(room) {
@@ -239,6 +312,7 @@ function startSelectedGame(room) {
   room.instructions = null
   room.phase = 'playing'
   if (gameId === 'guess_the_time') return startGuessTimeGame(room)
+  if (gameId === 'impostor_color') return startImpostorColorGame(room)
   startReactionTimeGame(room)
 }
 
@@ -388,6 +462,7 @@ function finishReactionRound(room) {
       game.phaseEndsAt = null
       game.winnerId = survivors.length === 1 ? survivors[0] : null
       broadcastRoom(room, 'game_state')
+      scheduleNextGame(room)
       return
     }
     game.round += 1
@@ -440,6 +515,7 @@ function completeGuessTimeGame(room, survivors) {
   game.phaseEndsAt = null
   game.winnerId = survivors.length === 1 ? survivors[0] : null
   broadcastRoom(room, 'game_state')
+  scheduleNextGame(room)
 }
 
 function beginGuessTimeRound(room) {
@@ -559,6 +635,186 @@ function startGuessTimeGame(room) {
   beginGuessTimeRound(room)
 }
 
+function activeImpostorColorPlayers(room) {
+  return room.game.playerIds.filter((playerId) =>
+    !room.game.eliminatedIds.includes(playerId) && findPlayer(room, playerId),
+  )
+}
+
+function nextImpostorColorPlayer(room, currentPlayerId) {
+  const activePlayers = activeImpostorColorPlayers(room)
+  if (!activePlayers.length) return null
+  const currentIndex = room.game.playerIds.indexOf(currentPlayerId)
+  for (let offset = 1; offset <= room.game.playerIds.length; offset += 1) {
+    const candidate = room.game.playerIds[(currentIndex + offset) % room.game.playerIds.length]
+    if (activePlayers.includes(candidate)) return candidate
+  }
+  return activePlayers[0]
+}
+
+function finishImpostorColorGame(room) {
+  const game = room.game
+  clearGameTimer(room)
+  game.phase = 'complete'
+  game.phaseEndsAt = null
+  game.currentPlayerId = null
+  game.winnerId = activeImpostorColorPlayers(room).length === 1 ? activeImpostorColorPlayers(room)[0] : null
+  broadcastRoom(room, 'game_state')
+  advanceGameQueue(room)
+}
+
+function beginImpostorColorFarewell(room) {
+  const game = room.game
+  if (!game || game.id !== 'impostor_color') return
+  game.phase = 'returning'
+  game.phaseEndsAt = Date.now() + IMPOSTOR_COLOR_RETURN_MS
+  broadcastRoom(room, 'game_state')
+  scheduleGame(room, IMPOSTOR_COLOR_RETURN_MS, () => {
+    game.selectedBottleIndex = null
+    game.phase = 'farewell'
+    game.phaseEndsAt = Date.now() + IMPOSTOR_COLOR_FAREWELL_MS
+    broadcastRoom(room, 'game_state')
+    scheduleGame(room, IMPOSTOR_COLOR_FAREWELL_MS, () => finishImpostorColorGame(room))
+  })
+}
+
+function setImpostorColorTurn(room) {
+  const game = room.game
+  if (!game || game.id !== 'impostor_color') return
+  if (!activeImpostorColorPlayers(room).length || !game.bottles.some((bottle) => bottle.state === 'unpicked')) {
+    return finishImpostorColorGame(room)
+  }
+  game.phase = 'picking'
+  game.phaseEndsAt = Date.now() + IMPOSTOR_COLOR_PICK_MS
+  game.selectedBottleIndex = null
+  game.eliminatedPlayerId = null
+  if (!game.currentPlayerId || !activeImpostorColorPlayers(room).includes(game.currentPlayerId)) {
+    game.currentPlayerId = activeImpostorColorPlayers(room)[0]
+  }
+  broadcastRoom(room, 'game_state')
+
+  scheduleGame(room, IMPOSTOR_COLOR_PICK_MS, () => handleImpostorColorPickTimeout(room))
+
+  const player = findPlayer(room, game.currentPlayerId)?.player
+  if (player?.bot) {
+    const botTimer = setTimeout(() => {
+      const availableBottles = game.bottles.filter((bottle) => bottle.state === 'unpicked')
+      const bottle = availableBottles[Math.floor(Math.random() * availableBottles.length)]
+      if (bottle) pickImpostorColorBottle(room, player.id, bottle.index)
+    }, IMPOSTOR_COLOR_TURN_DELAY_MS)
+    game.botTimers.push(botTimer)
+  }
+}
+
+function continueImpostorColorGame(room, previousPlayerId) {
+  const game = room.game
+  if (!game || game.id !== 'impostor_color') return
+  if (game.bottles.filter((bottle) => bottle.state === 'revealed' && bottle.color === 'red').length >= IMPOSTOR_COLOR_RED_BOTTLE_COUNT) {
+    return beginImpostorColorFarewell(room)
+  }
+  if (!activeImpostorColorPlayers(room).length) return finishImpostorColorGame(room)
+  game.currentPlayerId = nextImpostorColorPlayer(room, previousPlayerId)
+  game.phase = 'turn_delay'
+  game.phaseEndsAt = Date.now() + IMPOSTOR_COLOR_TURN_DELAY_MS
+  broadcastRoom(room, 'game_state')
+  scheduleGame(room, IMPOSTOR_COLOR_TURN_DELAY_MS, () => setImpostorColorTurn(room))
+}
+
+function handleImpostorColorPickTimeout(room) {
+  const game = room.game
+  if (!game || game.id !== 'impostor_color' || game.phase !== 'picking') return
+  const playerId = game.currentPlayerId
+  const warnings = (game.warningCounts.get(playerId) || 0) + 1
+  game.warningCounts.set(playerId, warnings)
+  if (warnings === 1) {
+    game.phase = 'warning'
+    game.phaseEndsAt = Date.now() + IMPOSTOR_COLOR_WARNING_MS
+    broadcastRoom(room, 'game_state')
+    scheduleGame(room, IMPOSTOR_COLOR_WARNING_MS, () => continueImpostorColorGame(room, playerId))
+    return
+  }
+  game.eliminatedIds.push(playerId)
+  game.afkEliminatedIds.push(playerId)
+  game.eliminatedPlayerId = playerId
+  game.phase = 'afk_eliminated'
+  game.phaseEndsAt = Date.now() + IMPOSTOR_COLOR_AWW_MS
+  broadcastRoom(room, 'game_state')
+  scheduleGame(room, IMPOSTOR_COLOR_AWW_MS, () => {
+    if (activeImpostorColorPlayers(room).length <= 1) return finishImpostorColorGame(room)
+    continueImpostorColorGame(room, playerId)
+  })
+}
+
+function revealImpostorColorBottle(room, bottleIndex, playerId) {
+  const game = room.game
+  const bottle = game?.bottles[bottleIndex]
+  if (!game || !bottle || game.selectedBottleIndex !== bottleIndex) return
+  bottle.state = 'revealed'
+  game.phase = 'revealing'
+  game.phaseEndsAt = Date.now() + IMPOSTOR_COLOR_REVEAL_MS
+  broadcastRoom(room, 'game_state')
+  scheduleGame(room, IMPOSTOR_COLOR_REVEAL_MS, () => {
+    if (bottle.color === 'red') {
+      game.eliminatedIds.push(playerId)
+      game.eliminatedPlayerId = playerId
+      game.phase = 'aww'
+      game.phaseEndsAt = Date.now() + IMPOSTOR_COLOR_AWW_MS
+      broadcastRoom(room, 'game_state')
+      scheduleGame(room, IMPOSTOR_COLOR_AWW_MS, () => continueImpostorColorGame(room, playerId))
+      return
+    }
+    game.phase = 'safe'
+    game.phaseEndsAt = Date.now() + IMPOSTOR_COLOR_AWW_MS
+    broadcastRoom(room, 'game_state')
+    scheduleGame(room, IMPOSTOR_COLOR_AWW_MS, () => continueImpostorColorGame(room, playerId))
+  })
+}
+
+function pickImpostorColorBottle(room, clientId, bottleIndex) {
+  const game = room.game
+  if (!game || game.id !== 'impostor_color' || game.phase !== 'picking' || game.currentPlayerId !== clientId) return false
+  const bottle = game.bottles[bottleIndex]
+  if (!bottle || bottle.state !== 'unpicked') return false
+  bottle.state = 'shaking'
+  bottle.pickedById = clientId
+  game.selectedBottleIndex = bottleIndex
+  game.phase = 'shaking'
+  game.phaseEndsAt = Date.now() + IMPOSTOR_COLOR_SHAKE_MS
+  broadcastRoom(room, 'game_state')
+  scheduleGame(room, IMPOSTOR_COLOR_SHAKE_MS, () => revealImpostorColorBottle(room, bottleIndex, clientId))
+  return true
+}
+
+function startImpostorColorGame(room) {
+  const playerIds = roomPlayers(room).map((player) => player.id)
+  const redIndexes = new Set([...Array(IMPOSTOR_COLOR_BOTTLE_COUNT).keys()]
+    .sort(() => Math.random() - 0.5)
+    .slice(0, IMPOSTOR_COLOR_RED_BOTTLE_COUNT))
+  room.game = {
+    id: 'impostor_color',
+    phase: 'picking',
+    phaseEndsAt: null,
+    playerIds,
+    currentPlayerId: playerIds[0] || null,
+    selectedBottleIndex: null,
+    eliminatedIds: [],
+    afkEliminatedIds: [],
+    eliminatedPlayerId: null,
+    winnerId: null,
+    warningCounts: new Map(),
+    bottles: Array.from({ length: IMPOSTOR_COLOR_BOTTLE_COUNT }, (_, index) => ({
+      index,
+      color: redIndexes.has(index) ? 'red' : 'green',
+      state: 'unpicked',
+      pickedById: null,
+    })),
+    timer: null,
+    botTimers: [],
+  }
+  broadcastRoom(room, 'game_started')
+  setImpostorColorTurn(room)
+}
+
 function clearDisconnect(room, clientId) {
   const timer = room.disconnectTimers.get(clientId)
   if (timer) clearTimeout(timer)
@@ -595,6 +851,7 @@ function completeReactionGame(room, survivors) {
   game.lastResult = null
   game.winnerId = survivors.length === 1 ? survivors[0] : null
   broadcastRoom(room, 'game_state')
+  scheduleNextGame(room)
 }
 
 function removeReactionPlayer(room, clientId) {
@@ -656,9 +913,36 @@ function removeGuessTimePlayer(room, clientId) {
   return true
 }
 
+function removeImpostorColorPlayer(room, clientId) {
+  const game = room.game
+  if (!game || game.id !== 'impostor_color') return removePlayer(room, clientId)
+  if (!removePlayer(room, clientId)) return false
+
+  game.playerIds = game.playerIds.filter((playerId) => playerId !== clientId)
+  game.eliminatedIds = game.eliminatedIds.filter((playerId) => playerId !== clientId)
+  game.afkEliminatedIds = game.afkEliminatedIds.filter((playerId) => playerId !== clientId)
+  if (game.eliminatedPlayerId === clientId) game.eliminatedPlayerId = null
+  if (!activeImpostorColorPlayers(room).length) {
+    finishImpostorColorGame(room)
+    return true
+  }
+  if (game.currentPlayerId === clientId) {
+    clearGameTimer(room)
+    game.currentPlayerId = activeImpostorColorPlayers(room)[0]
+    game.phase = 'turn_delay'
+    game.phaseEndsAt = Date.now() + IMPOSTOR_COLOR_TURN_DELAY_MS
+    broadcastRoom(room, 'game_state')
+    scheduleGame(room, IMPOSTOR_COLOR_TURN_DELAY_MS, () => setImpostorColorTurn(room))
+    return true
+  }
+  broadcastRoom(room, 'game_state')
+  return true
+}
+
 function removeGamePlayer(room, clientId) {
   if (room.game?.id === 'reaction_time') return removeReactionPlayer(room, clientId)
   if (room.game?.id === 'guess_the_time') return removeGuessTimePlayer(room, clientId)
+  if (room.game?.id === 'impostor_color') return removeImpostorColorPlayer(room, clientId)
   return removePlayer(room, clientId)
 }
 
@@ -703,6 +987,8 @@ function createRoom(clientId) {
     selectedGames: [],
     phase: 'lobby',
     game: null,
+    gameQueue: [],
+    gameIndex: 0,
     instructions: null,
     instructionTimer: null,
     revision: 0,
@@ -864,6 +1150,13 @@ wss.on('connection', (socket) => {
       }
       return
     }
+    if (message.type === 'impostor_color_pick') {
+      if (room.game?.id !== 'impostor_color') return reject(socket, 'Impostor Color is not active.')
+      if (!pickImpostorColorBottle(room, clientId, Number(message.bottleIndex))) {
+        return reject(socket, 'Wait for your turn and choose an unopened bottle.')
+      }
+      return
+    }
     if (message.type === 'close_instructions') {
       if (room.phase !== 'instructions' || !room.instructions) {
         return reject(socket, 'There are no instructions to close.')
@@ -890,6 +1183,11 @@ wss.on('connection', (socket) => {
       } else if (players.length < 2) {
         return reject(socket, 'At least two players are needed to start.')
       }
+      room.gameQueue = room.manualGames
+        ? room.selectedGames.filter((gameId) => SUPPORTED_GAME_IDS.has(gameId))
+        : randomGameQueue(room.maxGames)
+      if (!room.gameQueue.length) room.gameQueue = randomGameQueue(room.maxGames)
+      room.gameIndex = 0
       if (!beginInstructions(room)) return reject(socket, 'Could not load instructions for the selected game.')
       return
     }

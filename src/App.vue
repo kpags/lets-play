@@ -88,6 +88,21 @@ const reactionTargetInteractive = computed(() =>
 )
 const reactionResultVisible = computed(() => reactionGame.value?.phase === 'result')
 const guessTimeGame = computed(() => reactionGame.value?.id === 'guess_the_time' ? reactionGame.value : null)
+const impostorColorGame = computed(() => reactionGame.value?.id === 'impostor_color' ? reactionGame.value : null)
+const impostorSelectedBottle = computed(() => {
+  const index = impostorColorGame.value?.selectedBottleIndex
+  return Number.isInteger(index) ? impostorColorGame.value?.bottles?.[index] : null
+})
+const canPickImpostorBottle = computed(() =>
+  impostorColorGame.value?.phase === 'picking'
+  && impostorColorGame.value.currentPlayerId === clientId
+  && !showReactionMenu.value,
+)
+const impostorPickCountdown = computed(() => {
+  if (impostorColorGame.value?.phase !== 'picking' || !impostorColorGame.value.phaseEndsAt) return null
+  const serverNow = reactionClockNow.value + reactionServerClockOffset.value
+  return Math.max(0, Math.ceil((impostorColorGame.value.phaseEndsAt - serverNow) / 1000))
+})
 const guessInputLocked = computed(() => guessTimeGame.value?.guessedPlayerIds?.includes(clientId))
 const guessPreparationCountdown = computed(() => {
   if (guessTimeGame.value?.phase !== 'preparing' || !guessTimeGame.value.phaseEndsAt) return null
@@ -135,6 +150,20 @@ const reactionStatus = computed(() => {
     return ''
   }
   return `${game.activePlayerName}'s turn`
+})
+const impostorColorStatus = computed(() => {
+  const game = impostorColorGame.value
+  if (!game) return ''
+  if (game.phase === 'complete') return game.winnerName ? `${game.winnerName} wins!` : 'All red bottles have been found.'
+  if (game.phase === 'farewell') return 'Saying goodbye to eliminated players…'
+  if (game.phase === 'returning') return 'Returning the last bottle…'
+  if (game.phase === 'aww') return `${game.eliminatedPlayerName} found a red bottle.`
+  if (game.phase === 'afk_eliminated') return `${game.eliminatedPlayerName} was eliminated due to AFK.`
+  if (game.phase === 'warning') return `${game.currentPlayerName} received an AFK warning.`
+  if (['shaking', 'revealing', 'safe', 'turn_delay'].includes(game.phase)) return ''
+  return game.currentPlayerId === clientId
+    ? `${impostorPickCountdown.value ?? 0} seconds to choose a bottle to shake.`
+    : `${game.currentPlayerName}'s turn`
 })
 
 function createInviteCode() {
@@ -216,6 +245,7 @@ function handleRoomMessage(event) {
     joiningFromInviteDialog.value = false
     if (message.room.phase === 'playing' && message.room.game?.id === 'reaction_time') currentView.value = 'reaction'
     if (message.room.phase === 'playing' && message.room.game?.id === 'guess_the_time') currentView.value = 'guess-time'
+    if (message.room.phase === 'playing' && message.room.game?.id === 'impostor_color') currentView.value = 'impostor-color'
     onlineError.value = message.room.phase === 'playing' ? 'Game started — waiting for gameplay.' : ''
   } else if (message.type === 'room_closed') {
     resetOnlineRoom(message.reason)
@@ -370,6 +400,7 @@ const toggleReady = () => sendRoom({ type: 'toggle_ready' })
 const addBot = (group, index) => sendRoom({ type: 'add_bot', group, index })
 const kickPlayer = (player) => sendRoom({ type: 'kick_player', playerId: player.id })
 const closeInstructions = () => sendRoom({ type: 'close_instructions' })
+const pickImpostorBottle = (bottleIndex) => sendRoom({ type: 'impostor_color_pick', bottleIndex })
 const recordReaction = () => {
   if (!reactionTargetInteractive.value) return
   reactionClickSubmitted.value = true
@@ -473,6 +504,17 @@ const renderGameToText = () =>
         secondsRemaining: guessCountdown.value,
         guessLocked: guessInputLocked.value,
         players: guessTimeGame.value.players,
+      },
+    }),
+    ...(currentView.value === 'impostor-color' && impostorColorGame.value && {
+      game: {
+        id: impostorColorGame.value.id,
+        phase: impostorColorGame.value.phase,
+        currentPlayerId: impostorColorGame.value.currentPlayerId,
+        selectedBottleIndex: impostorColorGame.value.selectedBottleIndex,
+        pickSecondsRemaining: impostorPickCountdown.value,
+        bottles: impostorColorGame.value.bottles,
+        eliminatedIds: impostorColorGame.value.eliminatedIds,
       },
     }),
   })
@@ -720,6 +762,93 @@ onBeforeUnmount(() => {
           <span v-else>{{ guessTimeGame?.guessedPlayerIds.includes(entry.playerId) ? 'Locked' : 'Waiting' }}</span>
         </article>
       </TransitionGroup>
+    </section>
+  </main>
+
+  <main v-else-if="currentView === 'impostor-color' || gameInstructions?.game?.id === 'impostor_color'" class="reaction-page impostor-color-page" aria-labelledby="impostor-color-title">
+    <header class="reaction-page__header">
+      <button
+        class="reaction-menu-trigger"
+        type="button"
+        aria-label="Open game menu"
+        aria-controls="impostor-color-game-menu"
+        :aria-expanded="showReactionMenu"
+        @click="toggleReactionMenu"
+      >
+        <span aria-hidden="true">⚙</span>
+      </button>
+      <div>
+        <p>Let's Play!</p>
+        <h1 id="impostor-color-title">Impostor Color</h1>
+      </div>
+      <p class="reaction-page__round">{{ impostorColorGame?.redBottlesPicked ?? 0 }} / {{ impostorColorGame?.totalRedBottles ?? 2 }} red bottles</p>
+
+      <section v-if="showReactionMenu" id="impostor-color-game-menu" class="reaction-menu" aria-label="Game menu">
+        <button type="button" @click="resumeReaction">Resume</button>
+        <button type="button" @click="openReactionSettings">Settings</button>
+        <button class="reaction-menu__quit" type="button" @click="quitActiveGame">Quit</button>
+      </section>
+    </header>
+
+    <section class="impostor-color-field" aria-live="polite">
+      <p class="impostor-color-field__status">{{ impostorColorStatus }}</p>
+      <div class="impostor-color-board">
+        <div class="impostor-color-grid" aria-label="Bottle selection grid">
+          <button
+            v-for="bottle in impostorColorGame?.bottles || []"
+            :key="bottle.index"
+            class="impostor-bottle"
+            :class="{
+              'impostor-bottle--selected': bottle.index === impostorColorGame?.selectedBottleIndex,
+              'impostor-bottle--revealed': bottle.state === 'revealed',
+              'impostor-bottle--green': bottle.color === 'green',
+              'impostor-bottle--red': bottle.color === 'red',
+            }"
+            type="button"
+            :disabled="!canPickImpostorBottle || bottle.state !== 'unpicked'"
+            :aria-label="canPickImpostorBottle && bottle.state === 'unpicked' ? `Shake bottle ${bottle.index + 1}` : `Bottle ${bottle.index + 1}`"
+            @click="pickImpostorBottle(bottle.index)"
+          >
+            <span class="impostor-bottle__cap"></span>
+            <span class="impostor-bottle__glass"><span class="impostor-bottle__liquid"></span></span>
+            <span class="impostor-bottle__number">{{ bottle.index + 1 }}</span>
+          </button>
+        </div>
+
+        <div v-if="impostorSelectedBottle" class="impostor-bottle impostor-bottle--spotlight" :class="{
+          'impostor-bottle--shaking': impostorColorGame?.phase === 'shaking',
+          'impostor-bottle--returning': impostorColorGame?.phase === 'returning',
+          'impostor-bottle--revealed': impostorSelectedBottle.state === 'revealed',
+          'impostor-bottle--green': impostorSelectedBottle.color === 'green',
+          'impostor-bottle--red': impostorSelectedBottle.color === 'red',
+        }" aria-hidden="true">
+          <span class="impostor-bottle__cap"></span>
+          <span class="impostor-bottle__glass"><span class="impostor-bottle__liquid"></span></span>
+        </div>
+        <p v-if="impostorColorGame?.phase === 'aww'" class="impostor-color-aww">Aww...NT!</p>
+        <p v-if="impostorColorGame?.phase === 'safe'" class="impostor-color-safe">SAFE</p>
+        <p v-if="impostorColorGame?.phase === 'afk_eliminated'" class="impostor-color-afk">
+          {{ impostorColorGame?.eliminatedPlayerName }} Eliminated due to AFK
+        </p>
+        <p v-if="impostorColorGame?.phase === 'farewell'" class="impostor-color-bye">
+          Bye<br />{{ impostorColorGame?.farewellNames?.join(', ') }}
+        </p>
+      </div>
+
+      <section class="impostor-color-players" aria-label="Players">
+        <article
+          v-for="player in impostorColorGame?.players || []"
+          :key="player.playerId"
+          :class="{
+            'impostor-color-player--warning': player.warningCount > 0 && !player.eliminated,
+            'impostor-color-player--afk-out': player.eliminatedByAfk,
+            'impostor-color-player--out': player.eliminated && !player.eliminatedByAfk,
+          }"
+        >
+          <strong>{{ player.playerName }}</strong>
+          <span>{{ player.eliminated ? 'Out' : player.playerId === impostorColorGame?.currentPlayerId ? 'Choosing' : 'Safe' }}</span>
+        </article>
+      </section>
     </section>
   </main>
 
