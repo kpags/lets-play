@@ -14,6 +14,7 @@ const reactionGame = ref(null)
 const reactionClickSubmitted = ref(false)
 const guessInput = ref('')
 const wordMemoryInput = ref('')
+const avoidSimilarInput = ref('')
 const reactionClockNow = ref(Date.now())
 const reactionServerClockOffset = ref(0)
 const showReactionMenu = ref(false)
@@ -51,7 +52,7 @@ const gameCatalogs = {
   'Free For All': freeForAllCatalog,
   'For Fun': forFunCatalog,
 }
-const playableGameIds = new Set(['reaction_time', 'guess_the_time', 'impostor_color', 'word_memory_challenge'])
+const playableGameIds = new Set(['reaction_time', 'guess_the_time', 'impostor_color', 'word_memory_challenge', 'avoid_similar_answer'])
 
 const playerCount = computed(
   () => teamOne.value.filter(Boolean).length + teamTwo.value.filter(Boolean).length,
@@ -145,6 +146,7 @@ const reactionTargetInteractive = computed(() =>
 const reactionResultVisible = computed(() => reactionGame.value?.phase === 'result')
 const guessTimeGame = computed(() => reactionGame.value?.id === 'guess_the_time' ? reactionGame.value : null)
 const wordMemoryGame = computed(() => reactionGame.value?.id === 'word_memory_challenge' ? reactionGame.value : null)
+const avoidSimilarGame = computed(() => reactionGame.value?.id === 'avoid_similar_answer' ? reactionGame.value : null)
 const impostorColorGame = computed(() => reactionGame.value?.id === 'impostor_color' ? reactionGame.value : null)
 const impostorSelectedBottle = computed(() => {
   const index = impostorColorGame.value?.selectedBottleIndex
@@ -163,6 +165,52 @@ const impostorPickCountdown = computed(() => {
 })
 const guessInputLocked = computed(() => guessTimeGame.value?.guessedPlayerIds?.includes(clientId))
 const wordMemoryInputLocked = computed(() => wordMemoryGame.value?.answeredPlayerIds?.includes(clientId))
+const avoidSimilarInputLocked = computed(() => avoidSimilarGame.value?.answeredPlayerIds?.includes(clientId))
+const avoidSimilarCountdown = computed(() => {
+  if (!avoidSimilarGame.value?.phaseEndsAt) return null
+  const serverNow = reactionClockNow.value + reactionServerClockOffset.value
+  return Math.max(0, Math.ceil((avoidSimilarGame.value.phaseEndsAt - serverNow) / 1000))
+})
+const avoidSimilarStatus = computed(() => {
+  const game = avoidSimilarGame.value
+  if (!game) return ''
+  if (game.phase === 'round_intro') return `Round ${game.round} starts in ${avoidSimilarCountdown.value}.`
+  if (game.phase === 'answering') return avoidSimilarInputLocked.value ? 'Your answer is locked.' : 'Choose an answer that avoids the game answer.'
+  if (game.phase === 'answers_locked') return 'Answers locked.'
+  if (game.phase === 'reveal_target') return 'Game answer revealed.'
+  if (game.phase === 'evaluation') return `Evaluate the other answers — ${avoidSimilarCountdown.value} seconds left.`
+  if (game.phase === 'vote_results') return ''
+  if (game.phase === 'round_result') return 'Round results'
+  if (game.phase === 'complete') return game.winnerName ? `${game.winnerName} wins!` : 'Avoid Similar Answer complete!'
+  return ''
+})
+const avoidSimilarMyVotes = computed(() => new Map(
+  (avoidSimilarGame.value?.voteRecords || [])
+    .filter((record) => record.voterPlayerId === clientId)
+    .map((record) => [record.targetPlayerId, record.vote]),
+))
+const avoidSimilarResolutionCards = computed(() => {
+  const game = avoidSimilarGame.value
+  if (!game || !['vote_results', 'round_result'].includes(game.phase)) return []
+  const players = new Map((game.players || []).map((player) => [player.playerId, player]))
+  const voteResults = new Map((game.voteResults || []).map((result) => [result.targetPlayerId, result]))
+  const playerIds = game.phase === 'vote_results'
+    ? (game.voteResults || []).map((result) => result.targetPlayerId)
+    : game.roundEliminatedIds || []
+  return playerIds.map((playerId) => {
+    const player = players.get(playerId)
+    const result = voteResults.get(playerId)
+    return {
+      playerId,
+      playerName: player?.playerName || 'Player',
+      answer: player?.answer || 'No answer',
+      up: result?.up ?? 0,
+      down: result?.down ?? 0,
+      eliminated: game.roundEliminatedIds.includes(playerId),
+      evaluated: Boolean(result),
+    }
+  })
+})
 const wordMemoryCountdown = computed(() => {
   if (!wordMemoryGame.value?.phaseEndsAt) return null
   const serverNow = reactionClockNow.value + reactionServerClockOffset.value
@@ -294,6 +342,7 @@ function applyRoomSnapshot(room, serverNow) {
   if (!room.game || room.game.phase !== 'target' || room.game.activePlayerId !== clientId) reactionClickSubmitted.value = false
   if (room.game?.id !== 'guess_the_time' || room.game.phase !== 'guessing') guessInput.value = ''
   if (room.game?.id !== 'word_memory_challenge' || room.game.phase !== 'answering') wordMemoryInput.value = ''
+  if (room.game?.id !== 'avoid_similar_answer' || room.game.phase !== 'answering') avoidSimilarInput.value = ''
   inviteCode.value = room.code
   roomMode.value = room.mode
   roomFormat.value = room.format
@@ -323,6 +372,7 @@ function handleRoomMessage(event) {
     if (message.room.phase === 'playing' && message.room.game?.id === 'reaction_time') currentView.value = 'reaction'
     if (message.room.phase === 'playing' && message.room.game?.id === 'guess_the_time') currentView.value = 'guess-time'
     if (message.room.phase === 'playing' && message.room.game?.id === 'word_memory_challenge') currentView.value = 'word-memory'
+    if (message.room.phase === 'playing' && message.room.game?.id === 'avoid_similar_answer') currentView.value = 'avoid-similar'
     if (message.room.phase === 'playing' && message.room.game?.id === 'impostor_color') currentView.value = 'impostor-color'
     onlineError.value = message.room.phase === 'playing' ? 'Game started — waiting for gameplay.' : ''
   } else if (message.type === 'room_closed') {
@@ -516,6 +566,20 @@ function submitWordMemoryAnswer() {
   sendRoom({ type: 'word_memory_submit', answer: normalizeWordMemoryInput(wordMemoryInput.value) })
 }
 
+function normalizeAvoidSimilarInput(value) {
+  return String(value || '').replace(/[\u0000-\u001f\u007f]/g, '').slice(0, 80)
+}
+
+function submitAvoidSimilarAnswer() {
+  if (avoidSimilarInputLocked.value || isTournamentSpectator.value) return
+  sendRoom({ type: 'avoid_similar_submit', answer: normalizeAvoidSimilarInput(avoidSimilarInput.value) })
+}
+
+function voteAvoidSimilar(targetPlayerId, vote) {
+  if (isTournamentSpectator.value || showReactionMenu.value) return
+  sendRoom({ type: 'avoid_similar_vote', targetPlayerId, vote })
+}
+
 function closeSettings() {
   currentView.value = settingsReturnView.value
   settingsReturnView.value = 'landing'
@@ -627,6 +691,24 @@ const renderGameToText = () =>
         correctPlayerIds: wordMemoryGame.value.correctPlayerIds,
         eliminatedIds: wordMemoryGame.value.eliminatedIds,
         players: wordMemoryGame.value.players,
+      },
+    }),
+    ...(currentView.value === 'avoid-similar' && avoidSimilarGame.value && {
+      game: {
+        id: avoidSimilarGame.value.id,
+        round: avoidSimilarGame.value.round,
+        maxRounds: avoidSimilarGame.value.maxRounds,
+        phase: avoidSimilarGame.value.phase,
+        request: avoidSimilarGame.value.request,
+        gameAnswer: avoidSimilarGame.value.gameAnswer,
+        secondsRemaining: avoidSimilarCountdown.value,
+        answerLocked: avoidSimilarInputLocked.value,
+        eliminatedIds: avoidSimilarGame.value.eliminatedIds,
+        roundEliminatedIds: avoidSimilarGame.value.roundEliminatedIds,
+        evaluationPlayerIds: avoidSimilarGame.value.evaluationPlayerIds,
+        myVotes: [...avoidSimilarMyVotes.value],
+        voteResults: avoidSimilarGame.value.voteResults,
+        players: avoidSimilarGame.value.players,
       },
     }),
     ...(currentView.value === 'impostor-color' && impostorColorGame.value && {
@@ -979,6 +1061,136 @@ onBeforeUnmount(() => {
           <span v-else-if="['round_result', 'complete'].includes(wordMemoryGame?.phase)">{{ wordMemoryGame?.correctPlayerIds.includes(entry.playerId) ? 'Safe' : 'Out' }}</span>
           <span v-else>{{ wordMemoryGame?.answeredPlayerIds.includes(entry.playerId) ? 'Locked' : 'Thinking' }}</span>
           <small v-if="isRankingFormat">{{ tournamentPoints(entry.playerId) }} pts</small>
+        </article>
+      </TransitionGroup>
+    </section>
+  </main>
+
+  <main v-else-if="currentView === 'avoid-similar' || gameInstructions?.game?.id === 'avoid_similar_answer'" class="reaction-page avoid-similar-page" aria-labelledby="avoid-similar-title">
+    <header class="reaction-page__header">
+      <button
+        class="reaction-menu-trigger"
+        type="button"
+        aria-label="Open game menu"
+        aria-controls="avoid-similar-game-menu"
+        :aria-expanded="showReactionMenu"
+        @click="toggleReactionMenu"
+      >
+        <span aria-hidden="true">⚙</span>
+      </button>
+      <div>
+        <p>Let's Play!</p>
+        <h1 id="avoid-similar-title">Avoid Similar Answer</h1>
+      </div>
+      <p class="reaction-page__round">Round {{ avoidSimilarGame?.round }} / {{ avoidSimilarGame?.maxRounds }}</p>
+
+      <section v-if="showReactionMenu" id="avoid-similar-game-menu" class="reaction-menu" aria-label="Game menu">
+        <button type="button" @click="resumeReaction">Resume</button>
+        <button type="button" @click="openReactionSettings">Settings</button>
+        <button class="reaction-menu__quit" type="button" @click="quitActiveGame">Quit</button>
+      </section>
+    </header>
+
+    <section class="avoid-similar-field" :class="{ 'avoid-similar-field--with-status': avoidSimilarStatus }" aria-live="polite">
+      <p v-if="avoidSimilarStatus" class="avoid-similar-field__status">{{ avoidSimilarStatus }}</p>
+
+      <div class="avoid-similar-prompt" :class="`avoid-similar-prompt--${avoidSimilarGame?.phase || 'waiting'}`">
+        <strong v-if="avoidSimilarGame?.phase === 'round_intro'" class="avoid-similar-prompt__countdown">{{ avoidSimilarCountdown }}</strong>
+        <template v-else-if="['answering', 'answers_locked', 'reveal_target', 'evaluation'].includes(avoidSimilarGame?.phase)">
+          <p class="avoid-similar-prompt__request">{{ avoidSimilarGame?.request }}</p>
+          <p v-if="['reveal_target', 'evaluation'].includes(avoidSimilarGame?.phase)" class="avoid-similar-prompt__target">
+            <span>Game answer</span>
+            <strong>{{ avoidSimilarGame?.gameAnswer }}</strong>
+          </p>
+        </template>
+        <template v-else-if="['vote_results', 'round_result'].includes(avoidSimilarGame?.phase)">
+          <p class="avoid-similar-prompt__result-title">
+            {{ avoidSimilarGame?.phase === 'vote_results' ? 'Vote results' : 'Eliminated this round' }}
+          </p>
+          <TransitionGroup
+            name="avoid-similar-resolution"
+            tag="div"
+            class="avoid-similar-resolution"
+            :class="{ 'avoid-similar-resolution--eliminated': avoidSimilarGame?.phase === 'round_result' }"
+          >
+            <article
+              v-for="card in avoidSimilarResolutionCards"
+              :key="card.playerId"
+              class="avoid-similar-resolution__card"
+              :class="{ 'avoid-similar-resolution__card--out': card.eliminated }"
+            >
+              <strong>{{ card.playerName }}</strong>
+              <span>{{ card.answer }}</span>
+              <small v-if="avoidSimilarGame?.phase === 'vote_results' && card.evaluated">👍 {{ card.up }} &nbsp; 👎 {{ card.down }}</small>
+              <small v-else>Eliminated</small>
+            </article>
+          </TransitionGroup>
+          <p v-if="avoidSimilarGame?.phase === 'round_result' && !avoidSimilarResolutionCards.length" class="avoid-similar-resolution__safe">Everyone is safe!</p>
+        </template>
+        <strong v-else-if="avoidSimilarGame?.phase === 'complete'" class="avoid-similar-prompt__complete">{{ avoidSimilarGame?.winnerName || 'Round complete' }}</strong>
+      </div>
+
+      <form
+        v-if="avoidSimilarGame?.phase === 'answering' && !avoidSimilarGame.eliminatedIds.includes(clientId) && !isTournamentSpectator"
+        class="guess-time-form avoid-similar-form"
+        @submit.prevent="submitAvoidSimilarAnswer"
+      >
+        <label for="avoid-similar-input">Your answer</label>
+        <div>
+          <input
+            id="avoid-similar-input"
+            v-model="avoidSimilarInput"
+            type="text"
+            autocomplete="off"
+            maxlength="80"
+            placeholder="Type your answer"
+            :disabled="avoidSimilarInputLocked || showReactionMenu"
+            @input="avoidSimilarInput = normalizeAvoidSimilarInput(avoidSimilarInput)"
+          />
+          <button class="guess-time-form__lock" type="submit" :disabled="avoidSimilarInputLocked || showReactionMenu">{{ avoidSimilarInputLocked ? 'Locked' : 'Lock answer' }}</button>
+        </div>
+        <small>{{ avoidSimilarCountdown }} seconds remaining</small>
+      </form>
+
+      <section v-if="avoidSimilarGame?.phase === 'evaluation'" class="avoid-similar-evaluation" aria-label="Evaluate player answers">
+        <article v-for="player in avoidSimilarGame.players.filter((entry) => avoidSimilarGame.evaluationPlayerIds.includes(entry.playerId))" :key="player.playerId" class="avoid-similar-evaluation__card">
+          <strong>{{ player.playerName }}</strong>
+          <span>{{ player.answer || 'No answer' }}</span>
+          <div v-if="player.playerId !== clientId && !isTournamentSpectator" class="avoid-similar-evaluation__votes" role="group" :aria-label="`Evaluate ${player.playerName}'s answer`">
+            <button
+              type="button"
+              :class="{ 'avoid-similar-evaluation__vote--selected': avoidSimilarMyVotes.get(player.playerId) === 'up' }"
+              :aria-pressed="avoidSimilarMyVotes.get(player.playerId) === 'up'"
+              :disabled="showReactionMenu"
+              @click="voteAvoidSimilar(player.playerId, 'up')"
+            >👍 <span>Up</span></button>
+            <button
+              type="button"
+              :class="{ 'avoid-similar-evaluation__vote--selected': avoidSimilarMyVotes.get(player.playerId) === 'down' }"
+              :aria-pressed="avoidSimilarMyVotes.get(player.playerId) === 'down'"
+              :disabled="showReactionMenu"
+              @click="voteAvoidSimilar(player.playerId, 'down')"
+            >👎 <span>Down</span></button>
+          </div>
+          <small v-else-if="player.playerId === clientId">Your answer</small>
+        </article>
+      </section>
+
+      <TransitionGroup name="reaction-rank" tag="section" class="guess-time-players avoid-similar-players" aria-label="Avoid Similar Answer players">
+        <article
+          v-for="player in avoidSimilarGame?.players || []"
+          :key="player.playerId"
+          class="guess-time-player avoid-similar-player"
+          :class="{ 'guess-time-player--eliminated': player.eliminated, 'avoid-similar-player--direct-out': player.directEliminated }"
+        >
+          <span class="reaction-leaderboard__rank">{{ player.rank }}</span>
+          <strong>{{ player.playerName }}</strong>
+          <span v-if="avoidSimilarGame?.phase === 'answers_locked' && !player.eliminated" class="avoid-similar-player__answer-bubble">{{ player.answer || 'No answer' }}</span>
+          <span v-if="player.eliminated">Out</span>
+          <span v-else-if="avoidSimilarGame?.phase === 'evaluation'">Evaluating</span>
+          <span v-else-if="avoidSimilarGame?.phase === 'vote_results'">{{ player.eliminated ? 'Out' : 'Safe' }}</span>
+          <span v-else>{{ avoidSimilarGame?.answeredPlayerIds.includes(player.playerId) ? 'Locked' : 'Thinking' }}</span>
+          <small v-if="isRankingFormat">{{ tournamentPoints(player.playerId) }} pts</small>
         </article>
       </TransitionGroup>
     </section>

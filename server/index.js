@@ -38,8 +38,15 @@ const WORD_MEMORY_ANSWER_MS = 15_000
 const WORD_MEMORY_REVEAL_MS = 3_000
 const WORD_MEMORY_RESULT_MS = 3_000
 const WORD_MEMORY_BOT_CORRECT_CHANCE = 0.6
+const AVOID_SIMILAR_ROUND_INTRO_MS = 3_000
+const AVOID_SIMILAR_ANSWER_MS = 15_000
+const AVOID_SIMILAR_LOCKED_MS = 3_000
+const AVOID_SIMILAR_TARGET_REVEAL_MS = 3_000
+const AVOID_SIMILAR_EVALUATION_MS = 30_000
+const AVOID_SIMILAR_VOTE_RESULT_MS = 3_000
+const AVOID_SIMILAR_RESULT_MS = 3_000
 const INTERMISSION_DURATION_MS = 15_000
-const SUPPORTED_GAME_IDS = new Set(['reaction_time', 'guess_the_time', 'impostor_color', 'word_memory_challenge'])
+const SUPPORTED_GAME_IDS = new Set(['reaction_time', 'guess_the_time', 'impostor_color', 'word_memory_challenge', 'avoid_similar_answer'])
 function loadGameCatalog(fileName) {
   const source = readFileSync(new URL(`../data/games/${fileName}`, import.meta.url), 'utf8').trim()
   return source ? JSON.parse(source) : []
@@ -188,6 +195,7 @@ function gameView(room) {
   if (room.game.id === 'guess_the_time') return guessTimeGameView(room)
   if (room.game.id === 'impostor_color') return impostorColorGameView(room)
   if (room.game.id === 'word_memory_challenge') return wordMemoryGameView(room)
+  if (room.game.id === 'avoid_similar_answer') return avoidSimilarGameView(room)
   return reactionGameView(room)
 }
 
@@ -360,6 +368,45 @@ function wordMemoryGameView(room) {
   }
 }
 
+function avoidSimilarGameView(room) {
+  const game = room.game
+  const playerById = new Map(roomPlayers(room).map((player) => [player.id, player]))
+  const showAnswers = ['answers_locked', 'reveal_target', 'evaluation', 'vote_results', 'round_result', 'complete'].includes(game.phase)
+  const showTarget = ['reveal_target', 'evaluation', 'vote_results', 'round_result', 'complete'].includes(game.phase)
+  const showVoteResults = ['vote_results', 'round_result', 'complete'].includes(game.phase)
+  const playerIds = [...game.playerIds].sort((left, right) => Number(game.eliminatedIds.includes(left)) - Number(game.eliminatedIds.includes(right)))
+  return {
+    id: game.id,
+    round: game.round,
+    maxRounds: game.maxRounds,
+    phase: game.phase,
+    phaseEndsAt: game.phaseEndsAt,
+    request: game.request || '',
+    gameAnswer: showTarget ? game.gameAnswer || '' : '',
+    answeredPlayerIds: [...game.answers.keys()],
+    eliminatedIds: game.eliminatedIds,
+    directEliminatedIds: game.directEliminatedIds,
+    roundEliminatedIds: game.roundEliminatedIds,
+    voteRecords: game.phase === 'evaluation'
+      ? [...game.votes.entries()].flatMap(([targetPlayerId, votes]) => [...votes.entries()].map(([voterPlayerId, vote]) => ({ targetPlayerId, voterPlayerId, vote })))
+      : [],
+    voteResults: showVoteResults ? game.voteResults : [],
+    evaluationPlayerIds: game.phase === 'evaluation' ? game.evaluationPlayerIds : [],
+    winnerId: game.winnerId,
+    winnerName: playerById.get(game.winnerId)?.name || '',
+    players: playerIds.map((playerId, index) => ({
+      playerId,
+      playerName: playerById.get(playerId)?.name || '',
+      rank: index + 1,
+      answer: showAnswers ? game.answers.get(playerId) || '' : null,
+      answered: game.answers.has(playerId),
+      eliminated: game.eliminatedIds.includes(playerId),
+      eliminatedThisRound: game.roundEliminatedIds.includes(playerId),
+      directEliminated: game.directEliminatedIds.includes(playerId),
+    })),
+  }
+}
+
 function broadcastRoom(room, type = 'room_state') {
   room.revision += 1
   const payload = { type, revision: room.revision, room: roomView(room), serverNow: Date.now() }
@@ -442,6 +489,11 @@ function applyRankingPoints(room, game) {
     game.playerIds.forEach((playerId) => addPoints(
       playerId,
       Number(game.correctPlayerIds.includes(playerId) ? allocation.winners : allocation.losers) || 0,
+    ))
+  } else if (game.id === 'avoid_similar_answer') {
+    game.playerIds.forEach((playerId) => addPoints(
+      playerId,
+      Number(game.eliminatedIds.includes(playerId) ? allocation.losers : allocation.winners) || 0,
     ))
   }
   game.pointsApplied = true
@@ -550,6 +602,7 @@ function startSelectedGame(room) {
   if (gameId === 'guess_the_time') return startGuessTimeGame(room)
   if (gameId === 'impostor_color') return startImpostorColorGame(room)
   if (gameId === 'word_memory_challenge') return startWordMemoryGame(room)
+  if (gameId === 'avoid_similar_answer') return startAvoidSimilarGame(room)
   startReactionTimeGame(room)
 }
 
@@ -1088,6 +1141,234 @@ function startWordMemoryGame(room) {
   beginWordMemoryRound(room)
 }
 
+function activeAvoidSimilarPlayers(room) {
+  return room.game.playerIds.filter((playerId) =>
+    !room.game.eliminatedIds.includes(playerId) && findPlayer(room, playerId),
+  )
+}
+
+function normalizeAvoidSimilarAnswer(value) {
+  return String(value || '')
+    .replace(/[\u0000-\u001f\u007f]/g, '')
+    .trim()
+    .toLowerCase()
+}
+
+function chooseAvoidSimilarPrompt(game) {
+  const prompts = DATASETS.avoid_similar_answer || []
+  const available = prompts.filter((prompt) => !game.usedRequests.includes(prompt.request))
+  const pool = available.length ? available : prompts
+  if (!pool.length) return null
+  const prompt = pool[Math.floor(Math.random() * pool.length)]
+  const answers = Array.isArray(prompt.answers) ? prompt.answers.filter(Boolean) : []
+  if (!answers.length) return null
+  game.usedRequests.push(prompt.request)
+  return {
+    request: String(prompt.request || ''),
+    gameAnswer: String(answers[Math.floor(Math.random() * answers.length)]),
+    possibleAnswers: answers.map(String),
+  }
+}
+
+function completeAvoidSimilarGame(room, survivors = activeAvoidSimilarPlayers(room)) {
+  const game = room.game
+  clearGameTimer(room)
+  game.phase = 'complete'
+  game.phaseEndsAt = null
+  game.winnerId = survivors.length === 1 ? survivors[0] : null
+  finalizeTournamentGame(room, game)
+  broadcastRoom(room, 'game_state')
+  scheduleNextGame(room)
+}
+
+function beginAvoidSimilarRound(room) {
+  const game = room.game
+  const prompt = chooseAvoidSimilarPrompt(game)
+  if (!prompt) return completeAvoidSimilarGame(room)
+  game.request = prompt.request
+  game.gameAnswer = prompt.gameAnswer
+  game.possibleAnswers = prompt.possibleAnswers
+  game.answers = new Map()
+  game.votes = new Map()
+  game.voteResults = []
+  game.evaluationPlayerIds = []
+  game.directEliminatedIds = []
+  game.roundEliminatedIds = []
+  game.phase = 'round_intro'
+  game.phaseEndsAt = Date.now() + AVOID_SIMILAR_ROUND_INTRO_MS
+  broadcastRoom(room, 'game_state')
+  scheduleGame(room, AVOID_SIMILAR_ROUND_INTRO_MS, () => beginAvoidSimilarAnswers(room))
+}
+
+function beginAvoidSimilarAnswers(room) {
+  const game = room.game
+  if (!game || game.id !== 'avoid_similar_answer') return
+  game.phase = 'answering'
+  game.phaseEndsAt = Date.now() + AVOID_SIMILAR_ANSWER_MS
+  broadcastRoom(room, 'game_state')
+  scheduleGame(room, AVOID_SIMILAR_ANSWER_MS, () => lockAvoidSimilarAnswers(room))
+  game.botTimers = activeAvoidSimilarPlayers(room)
+    .map((playerId) => findPlayer(room, playerId)?.player)
+    .filter((player) => player?.bot)
+    .map((player) => setTimeout(() => {
+      if (room.game?.id !== 'avoid_similar_answer' || room.game.phase !== 'answering') return
+      const answer = game.possibleAnswers[Math.floor(Math.random() * game.possibleAnswers.length)] || ''
+      submitAvoidSimilarAnswer(room, player.id, answer)
+    }, 350 + Math.floor(Math.random() * 1_250)))
+}
+
+function maybeLockAvoidSimilarAnswers(room) {
+  const activePlayers = activeAvoidSimilarPlayers(room)
+  if (activePlayers.every((playerId) => room.game.answers.has(playerId))) lockAvoidSimilarAnswers(room)
+}
+
+function submitAvoidSimilarAnswer(room, clientId, value) {
+  const game = room.game
+  if (!game || game.id !== 'avoid_similar_answer' || game.phase !== 'answering') return false
+  if (!activeAvoidSimilarPlayers(room).includes(clientId) || game.answers.has(clientId)) return false
+  const raw = String(value ?? '').replace(/[\u0000-\u001f\u007f]/g, '')
+  if (raw.length > 80) return false
+  game.answers.set(clientId, raw.trim())
+  broadcastRoom(room, 'game_state')
+  maybeLockAvoidSimilarAnswers(room)
+  return true
+}
+
+function lockAvoidSimilarAnswers(room) {
+  const game = room.game
+  if (!game || game.id !== 'avoid_similar_answer' || game.phase !== 'answering') return
+  activeAvoidSimilarPlayers(room).forEach((playerId) => {
+    if (!game.answers.has(playerId)) game.answers.set(playerId, '')
+  })
+  game.phase = 'answers_locked'
+  game.phaseEndsAt = Date.now() + AVOID_SIMILAR_LOCKED_MS
+  broadcastRoom(room, 'game_state')
+  scheduleGame(room, AVOID_SIMILAR_LOCKED_MS, () => revealAvoidSimilarTarget(room))
+}
+
+function revealAvoidSimilarTarget(room) {
+  const game = room.game
+  if (!game || game.id !== 'avoid_similar_answer') return
+  const targetAnswer = normalizeAvoidSimilarAnswer(game.gameAnswer)
+  const directEliminated = activeAvoidSimilarPlayers(room).filter((playerId) => {
+    const answer = normalizeAvoidSimilarAnswer(game.answers.get(playerId))
+    return !answer || answer === targetAnswer
+  })
+  game.directEliminatedIds = directEliminated
+  game.roundEliminatedIds = [...directEliminated]
+  game.eliminatedIds.push(...directEliminated)
+  game.phase = 'reveal_target'
+  game.phaseEndsAt = Date.now() + AVOID_SIMILAR_TARGET_REVEAL_MS
+  broadcastRoom(room, 'game_state')
+  scheduleGame(room, AVOID_SIMILAR_TARGET_REVEAL_MS, () => {
+    const survivors = activeAvoidSimilarPlayers(room)
+    if (survivors.length <= 1) return completeAvoidSimilarGame(room, survivors)
+    beginAvoidSimilarEvaluation(room)
+  })
+}
+
+function setAvoidSimilarVote(room, voterPlayerId, targetPlayerId, vote) {
+  const game = room.game
+  if (!game || game.id !== 'avoid_similar_answer' || game.phase !== 'evaluation') return false
+  if (!['up', 'down', 'clear'].includes(vote)) return false
+  const safePlayers = new Set(game.evaluationPlayerIds)
+  if (!safePlayers.has(voterPlayerId) || !safePlayers.has(targetPlayerId) || voterPlayerId === targetPlayerId) return false
+  const votes = game.votes.get(targetPlayerId) || new Map()
+  if (vote === 'clear' || votes.get(voterPlayerId) === vote) votes.delete(voterPlayerId)
+  else votes.set(voterPlayerId, vote)
+  if (votes.size) game.votes.set(targetPlayerId, votes)
+  else game.votes.delete(targetPlayerId)
+  broadcastRoom(room, 'game_state')
+  return true
+}
+
+function beginAvoidSimilarEvaluation(room) {
+  const game = room.game
+  if (!game || game.id !== 'avoid_similar_answer') return
+  game.evaluationPlayerIds = activeAvoidSimilarPlayers(room)
+  game.votes = new Map()
+  game.voteResults = []
+  game.phase = 'evaluation'
+  game.phaseEndsAt = Date.now() + AVOID_SIMILAR_EVALUATION_MS
+  broadcastRoom(room, 'game_state')
+  scheduleGame(room, AVOID_SIMILAR_EVALUATION_MS, () => resolveAvoidSimilarEvaluation(room))
+  game.botTimers = game.evaluationPlayerIds
+    .map((playerId) => findPlayer(room, playerId)?.player)
+    .filter((player) => player?.bot)
+    .flatMap((player) => game.evaluationPlayerIds
+      .filter((targetPlayerId) => targetPlayerId !== player.id)
+      .map((targetPlayerId, index) => setTimeout(() => {
+        if (room.game?.id !== 'avoid_similar_answer' || room.game.phase !== 'evaluation') return
+        setAvoidSimilarVote(room, player.id, targetPlayerId, Math.random() < 0.5 ? 'up' : 'down')
+      }, 700 + index * 500 + Math.floor(Math.random() * 14_000))))
+}
+
+function resolveAvoidSimilarEvaluation(room) {
+  const game = room.game
+  if (!game || game.id !== 'avoid_similar_answer') return
+  game.voteResults = game.evaluationPlayerIds.map((targetPlayerId) => {
+    const votes = game.votes.get(targetPlayerId)
+    let up = 0
+    let down = 0
+    votes?.forEach((vote) => {
+      if (vote === 'up') up += 1
+      if (vote === 'down') down += 1
+    })
+    return { targetPlayerId, up, down, eliminated: down > up }
+  })
+  const evaluationEliminated = game.voteResults
+    .filter((result) => result.eliminated)
+    .map((result) => result.targetPlayerId)
+  game.roundEliminatedIds.push(...evaluationEliminated)
+  game.eliminatedIds.push(...evaluationEliminated)
+  game.phase = 'vote_results'
+  game.phaseEndsAt = Date.now() + AVOID_SIMILAR_VOTE_RESULT_MS
+  broadcastRoom(room, 'game_state')
+  scheduleGame(room, AVOID_SIMILAR_VOTE_RESULT_MS, () => showAvoidSimilarRoundResult(room))
+}
+
+function showAvoidSimilarRoundResult(room) {
+  const game = room.game
+  if (!game || game.id !== 'avoid_similar_answer') return
+  game.phase = 'round_result'
+  game.phaseEndsAt = Date.now() + AVOID_SIMILAR_RESULT_MS
+  broadcastRoom(room, 'game_state')
+  scheduleGame(room, AVOID_SIMILAR_RESULT_MS, () => {
+    const survivors = activeAvoidSimilarPlayers(room)
+    if (survivors.length <= 1 || game.round >= game.maxRounds) return completeAvoidSimilarGame(room, survivors)
+    game.round += 1
+    beginAvoidSimilarRound(room)
+  })
+}
+
+function startAvoidSimilarGame(room) {
+  const playerIds = tournamentGamePlayers(room)
+  room.game = {
+    id: 'avoid_similar_answer',
+    round: 1,
+    maxRounds: maxRoundsForRoom(room, 'avoid_similar_answer', 3),
+    phase: 'round_intro',
+    phaseEndsAt: null,
+    request: '',
+    gameAnswer: '',
+    possibleAnswers: [],
+    answers: new Map(),
+    votes: new Map(),
+    voteResults: [],
+    evaluationPlayerIds: [],
+    directEliminatedIds: [],
+    roundEliminatedIds: [],
+    eliminatedIds: [],
+    usedRequests: [],
+    winnerId: null,
+    timer: null,
+    botTimers: [],
+    playerIds,
+  }
+  broadcastRoom(room, 'game_started')
+  beginAvoidSimilarRound(room)
+}
+
 function activeImpostorColorPlayers(room) {
   return room.game.playerIds.filter((playerId) =>
     !room.game.eliminatedIds.includes(playerId) && findPlayer(room, playerId),
@@ -1392,6 +1673,30 @@ function removeWordMemoryPlayer(room, clientId) {
   return true
 }
 
+function removeAvoidSimilarPlayer(room, clientId) {
+  const game = room.game
+  if (!game || game.id !== 'avoid_similar_answer') return removePlayer(room, clientId)
+  if (!removePlayer(room, clientId)) return false
+
+  game.playerIds = game.playerIds.filter((playerId) => playerId !== clientId)
+  game.eliminatedIds = game.eliminatedIds.filter((playerId) => playerId !== clientId)
+  game.directEliminatedIds = game.directEliminatedIds.filter((playerId) => playerId !== clientId)
+  game.roundEliminatedIds = game.roundEliminatedIds.filter((playerId) => playerId !== clientId)
+  game.evaluationPlayerIds = game.evaluationPlayerIds.filter((playerId) => playerId !== clientId)
+  game.answers.delete(clientId)
+  game.votes.delete(clientId)
+  game.votes.forEach((votes) => votes.delete(clientId))
+
+  const survivors = activeAvoidSimilarPlayers(room)
+  if (game.phase === 'complete' || survivors.length <= 2) {
+    completeAvoidSimilarGame(room, survivors)
+    return true
+  }
+  if (game.phase === 'answering') maybeLockAvoidSimilarAnswers(room)
+  else broadcastRoom(room, 'game_state')
+  return true
+}
+
 function removeImpostorColorPlayer(room, clientId) {
   const game = room.game
   if (!game || game.id !== 'impostor_color') return removePlayer(room, clientId)
@@ -1422,6 +1727,7 @@ function removeGamePlayer(room, clientId) {
   if (room.game?.id === 'reaction_time') return removeReactionPlayer(room, clientId)
   if (room.game?.id === 'guess_the_time') return removeGuessTimePlayer(room, clientId)
   if (room.game?.id === 'word_memory_challenge') return removeWordMemoryPlayer(room, clientId)
+  if (room.game?.id === 'avoid_similar_answer') return removeAvoidSimilarPlayer(room, clientId)
   if (room.game?.id === 'impostor_color') return removeImpostorColorPlayer(room, clientId)
   return removePlayer(room, clientId)
 }
@@ -1652,6 +1958,20 @@ wss.on('connection', (socket) => {
       if (room.game?.id !== 'word_memory_challenge') return reject(socket, 'Word Memory Challenge is not active.')
       if (!submitWordMemoryAnswer(room, clientId, message.answer)) {
         return reject(socket, 'Enter letters only, then lock your answer.')
+      }
+      return
+    }
+    if (message.type === 'avoid_similar_submit') {
+      if (room.game?.id !== 'avoid_similar_answer') return reject(socket, 'Avoid Similar Answer is not active.')
+      if (!submitAvoidSimilarAnswer(room, clientId, message.answer)) {
+        return reject(socket, 'Enter an answer up to 80 characters, then lock it.')
+      }
+      return
+    }
+    if (message.type === 'avoid_similar_vote') {
+      if (room.game?.id !== 'avoid_similar_answer') return reject(socket, 'Avoid Similar Answer is not active.')
+      if (!setAvoidSimilarVote(room, clientId, String(message.targetPlayerId || ''), message.vote)) {
+        return reject(socket, 'Vote for another safe player during the evaluation phase.')
       }
       return
     }
