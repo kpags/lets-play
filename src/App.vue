@@ -1,6 +1,8 @@
 <script setup>
 import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
-import gameCatalog from '../data/games/free_for_all.json'
+import freeForAllCatalog from '../data/games/free_for_all.json'
+import forFunCatalog from '../data/games/for_fun.json'
+import teamCatalog from '../data/games/team.json'
 
 const currentView = ref('landing')
 const sfxVolume = ref(75)
@@ -42,6 +44,12 @@ const menuItems = [
   { label: 'Invite Code', action: () => openInviteDialog() },
   { label: 'Settings', action: () => (currentView.value = 'settings') },
 ]
+const gameCatalogs = {
+  Team: teamCatalog,
+  'Free For All': freeForAllCatalog,
+  'For Fun': forFunCatalog,
+}
+const playableGameIds = new Set(['reaction_time', 'guess_the_time', 'impostor_color'])
 
 const playerCount = computed(
   () => teamOne.value.filter(Boolean).length + teamTwo.value.filter(Boolean).length,
@@ -56,9 +64,11 @@ const nonBotPlayersReady = computed(() =>
 )
 const canStartGame = computed(() => {
   if (!isRoomHost.value || !roomIsLobby.value || !nonBotPlayersReady.value) return false
+  if (!gameCatalog.value.some((game) => playableGameIds.has(game.id))) return false
   if (isTeamMode.value) return teamOne.value.some(Boolean) && teamTwo.value.some(Boolean)
   return playerCount.value >= 2
 })
+const gameCatalog = computed(() => gameCatalogs[roomMode.value] || [])
 const selectedGameCount = computed(() => selectedGames.value.length)
 const gameChooserIsReadOnly = computed(() => !isRoomHost.value || !roomIsLobby.value)
 const isRankingFormat = computed(() => onlineRoom.value?.tournament?.format === 'Ranking')
@@ -399,6 +409,7 @@ function cancelGameChooser() {
 }
 
 function canSelectGame(gameId) {
+  if (!playableGameIds.has(gameId)) return false
   return selectedGames.value.includes(gameId) || selectedGameCount.value < Number(maxGames.value)
 }
 
@@ -934,6 +945,7 @@ onBeforeUnmount(() => {
           <select v-model="roomMode" :disabled="!isRoomHost || !roomIsLobby" @change="updateRoomSettings">
             <option>Team</option>
             <option>Free For All</option>
+            <option>For Fun</option>
           </select>
         </label>
 
@@ -969,8 +981,8 @@ onBeforeUnmount(() => {
           {{ isRoomHost ? 'Choose Games' : 'View Games' }}
         </button>
 
-        <div class="room-actions">
-          <button class="room-action room-action--start" type="button" :disabled="!canStartGame" @click="sendRoom({ type: 'start_game' })">Start</button>
+        <div class="room-actions" :class="{ 'room-actions--host': isRoomHost }">
+          <button v-if="isRoomHost" class="room-action room-action--start" type="button" :disabled="!canStartGame" @click="sendRoom({ type: 'start_game' })">Start</button>
           <button class="room-action room-action--exit" type="button" @click="exitRoom">Exit</button>
         </div>
         <p v-if="onlineError" class="room-error" role="status">{{ onlineError }}</p>
@@ -1065,6 +1077,7 @@ onBeforeUnmount(() => {
                 @change="toggleSelectedGame(game.id)"
               />
               <span>{{ game.name }}</span>
+              <small v-if="!playableGameIds.has(game.id)">Coming soon</small>
             </label>
           </li>
         </ul>

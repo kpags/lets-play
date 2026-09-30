@@ -1,0 +1,11 @@
+[
+    {
+        "id": "impostor",
+        "name": "Impostor",
+        "description": "All players except one will be given a similar word. All players will describe their word as obscure as possible. Every end of the round, all players will vote who they think is the impostor and kick them out of the game.",
+        "rounds": 3,
+        "minimum_players": 3,
+        "win_condition": "Kick the impostor OR remain undetected as the impostor.",
+        "lose_condition": "Get kicked as an impostor OR fail to kick the impostor."
+    }
+]
