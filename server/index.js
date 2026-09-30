@@ -30,8 +30,16 @@ const IMPOSTOR_COLOR_PICK_MS = 5_000
 const IMPOSTOR_COLOR_WARNING_MS = 2_000
 const IMPOSTOR_COLOR_RETURN_MS = 500
 const IMPOSTOR_COLOR_FAREWELL_MS = 3_000
+const WORD_MEMORY_ROUND_INTRO_MS = 3_000
+const WORD_MEMORY_WORD_MS = 3_000
+const WORD_MEMORY_WORD_GAP_MS = 1_000
+const WORD_MEMORY_READY_MS = 5_000
+const WORD_MEMORY_ANSWER_MS = 15_000
+const WORD_MEMORY_REVEAL_MS = 3_000
+const WORD_MEMORY_RESULT_MS = 3_000
+const WORD_MEMORY_BOT_CORRECT_CHANCE = 0.6
 const INTERMISSION_DURATION_MS = 15_000
-const SUPPORTED_GAME_IDS = new Set(['reaction_time', 'guess_the_time', 'impostor_color'])
+const SUPPORTED_GAME_IDS = new Set(['reaction_time', 'guess_the_time', 'impostor_color', 'word_memory_challenge'])
 function loadGameCatalog(fileName) {
   const source = readFileSync(new URL(`../data/games/${fileName}`, import.meta.url), 'utf8').trim()
   return source ? JSON.parse(source) : []
@@ -42,6 +50,7 @@ const GAME_CATALOGS = {
   'Free For All': loadGameCatalog('free_for_all.json'),
   'For Fun': loadGameCatalog('for_fun.json'),
 }
+const DATASETS = JSON.parse(readFileSync(new URL('../data/datasets.json', import.meta.url), 'utf8'))
 const DEFAULT_PLAYER_NAMES = [
   'SkillIssue',
   'OopsIDied',
@@ -178,6 +187,7 @@ function roomView(room) {
 function gameView(room) {
   if (room.game.id === 'guess_the_time') return guessTimeGameView(room)
   if (room.game.id === 'impostor_color') return impostorColorGameView(room)
+  if (room.game.id === 'word_memory_challenge') return wordMemoryGameView(room)
   return reactionGameView(room)
 }
 
@@ -315,6 +325,41 @@ function guessTimeGameView(room) {
   }
 }
 
+function wordMemoryGameView(room) {
+  const game = room.game
+  const playerById = new Map(roomPlayers(room).map((player) => [player.id, player]))
+  const showAnswer = ['reveal', 'round_result', 'complete'].includes(game.phase)
+  const showQuestion = ['answering', 'answers_locked', 'reveal', 'round_result', 'complete'].includes(game.phase)
+  const showLockedAnswers = game.phase === 'answers_locked'
+  return {
+    id: game.id,
+    round: game.round,
+    maxRounds: game.maxRounds,
+    phase: game.phase,
+    phaseEndsAt: game.phaseEndsAt,
+    currentWord: game.phase === 'showing_word' ? game.words[game.wordIndex] || '' : '',
+    wordIndex: game.wordIndex,
+    wordCount: game.words.length,
+    question: showQuestion ? game.question?.text || '' : '',
+    answerWord: showAnswer ? game.question?.answerWord || '' : '',
+    answerLetterIndex: showAnswer ? game.question?.answerLetterIndex ?? null : null,
+    answer: showAnswer ? game.question?.answer || '' : '',
+    answeredPlayerIds: [...game.answers.keys()],
+    correctPlayerIds: showAnswer ? game.correctPlayerIds : [],
+    eliminatedIds: game.eliminatedIds,
+    winnerId: game.winnerId,
+    winnerName: playerById.get(game.winnerId)?.name || '',
+    players: game.playerIds.map((playerId) => ({
+      playerId,
+      playerName: playerById.get(playerId)?.name || '',
+      eliminated: game.eliminatedIds.includes(playerId),
+      answered: game.answers.has(playerId),
+      answer: showLockedAnswers ? game.answers.get(playerId) || '' : null,
+      correct: showAnswer ? game.correctPlayerIds.includes(playerId) : null,
+    })),
+  }
+}
+
 function broadcastRoom(room, type = 'room_state') {
   room.revision += 1
   const payload = { type, revision: room.revision, room: roomView(room), serverNow: Date.now() }
@@ -392,6 +437,11 @@ function applyRankingPoints(room, game) {
     game.playerIds.forEach((playerId) => addPoints(
       playerId,
       Number(game.eliminatedIds.includes(playerId) ? allocation.losers : allocation.winners) || 0,
+    ))
+  } else if (game.id === 'word_memory_challenge') {
+    game.playerIds.forEach((playerId) => addPoints(
+      playerId,
+      Number(game.correctPlayerIds.includes(playerId) ? allocation.winners : allocation.losers) || 0,
     ))
   }
   game.pointsApplied = true
@@ -499,6 +549,7 @@ function startSelectedGame(room) {
   room.phase = 'playing'
   if (gameId === 'guess_the_time') return startGuessTimeGame(room)
   if (gameId === 'impostor_color') return startImpostorColorGame(room)
+  if (gameId === 'word_memory_challenge') return startWordMemoryGame(room)
   startReactionTimeGame(room)
 }
 
@@ -831,6 +882,212 @@ function startGuessTimeGame(room) {
   beginGuessTimeRound(room)
 }
 
+function activeWordMemoryPlayers(room) {
+  return room.game.playerIds.filter((playerId) =>
+    !room.game.eliminatedIds.includes(playerId) && findPlayer(room, playerId),
+  )
+}
+
+function normalizeWordMemoryAnswer(value) {
+  return String(value || '').replace(/[^a-z]/gi, '').toLowerCase()
+}
+
+function chooseWordMemoryPhrase(game, room) {
+  const roundKey = room.format === 'Ranking' ? 'round_3' : `round_${game.round}`
+  const phrases = DATASETS.word_memory_challenge?.[roundKey] || []
+  const available = phrases.filter((phrase) => !game.usedPhrases.includes(phrase))
+  const pool = available.length ? available : phrases
+  if (!pool.length) return []
+  const phrase = pool[Math.floor(Math.random() * pool.length)]
+  game.usedPhrases.push(phrase)
+  return phrase.trim().split(/\s+/).filter(Boolean)
+}
+
+function createWordMemoryQuestion(words) {
+  const choices = [
+    { type: 'word', indexes: words.map((_, index) => index) },
+    { type: 'letter', indexes: words.map((_, index) => index) },
+    { type: 'next', indexes: words.slice(0, -1).map((_, index) => index) },
+    { type: 'previous', indexes: words.slice(1).map((_, index) => index + 1) },
+  ].filter((choice) => choice.indexes.length)
+  const choice = choices[Math.floor(Math.random() * choices.length)]
+  const index = choice.indexes[Math.floor(Math.random() * choice.indexes.length)]
+  const targetIndex = choice.type === 'next' ? index + 1 : choice.type === 'previous' ? index - 1 : index
+  const answerWord = words[targetIndex]
+  const answer = choice.type === 'letter' ? answerWord[0] : answerWord
+  const ordinal = index + 1
+  const text = choice.type === 'word'
+    ? `What is the ${ordinal}${ordinal === 1 ? 'st' : ordinal === 2 ? 'nd' : ordinal === 3 ? 'rd' : 'th'} word of this phrase?`
+    : choice.type === 'letter'
+      ? `What is the first letter of the ${ordinal}${ordinal === 1 ? 'st' : ordinal === 2 ? 'nd' : ordinal === 3 ? 'rd' : 'th'} word of this phrase?`
+      : choice.type === 'next'
+        ? `What is the next word after the ${ordinal}${ordinal === 1 ? 'st' : ordinal === 2 ? 'nd' : ordinal === 3 ? 'rd' : 'th'} word?`
+        : `What was the word before the ${ordinal}${ordinal === 1 ? 'st' : ordinal === 2 ? 'nd' : ordinal === 3 ? 'rd' : 'th'} word?`
+  return {
+    type: choice.type,
+    text,
+    answer: normalizeWordMemoryAnswer(answer),
+    answerWord,
+    answerLetterIndex: choice.type === 'letter' ? 0 : null,
+  }
+}
+
+function completeWordMemoryGame(room, survivors) {
+  const game = room.game
+  clearGameTimer(room)
+  game.phase = 'complete'
+  game.phaseEndsAt = null
+  game.winnerId = survivors.length === 1 ? survivors[0] : null
+  finalizeTournamentGame(room, game)
+  broadcastRoom(room, 'game_state')
+  scheduleNextGame(room)
+}
+
+function beginWordMemoryRound(room) {
+  const game = room.game
+  const survivors = activeWordMemoryPlayers(room)
+  if (survivors.length <= 1) return completeWordMemoryGame(room, survivors)
+  game.words = chooseWordMemoryPhrase(game, room)
+  if (!game.words.length) return completeWordMemoryGame(room, survivors)
+  game.question = createWordMemoryQuestion(game.words)
+  game.wordIndex = 0
+  game.answers = new Map()
+  game.correctPlayerIds = []
+  game.phase = 'round_intro'
+  game.phaseEndsAt = Date.now() + WORD_MEMORY_ROUND_INTRO_MS
+  broadcastRoom(room, 'game_state')
+  scheduleGame(room, WORD_MEMORY_ROUND_INTRO_MS, () => showWordMemoryWord(room))
+}
+
+function showWordMemoryWord(room) {
+  const game = room.game
+  if (!game || game.id !== 'word_memory_challenge') return
+  if (game.wordIndex >= game.words.length) return beginWordMemoryReady(room)
+  game.phase = 'showing_word'
+  game.phaseEndsAt = Date.now() + WORD_MEMORY_WORD_MS
+  broadcastRoom(room, 'game_state')
+  scheduleGame(room, WORD_MEMORY_WORD_MS, () => {
+    game.phase = 'word_gap'
+    game.phaseEndsAt = Date.now() + WORD_MEMORY_WORD_GAP_MS
+    broadcastRoom(room, 'game_state')
+    scheduleGame(room, WORD_MEMORY_WORD_GAP_MS, () => {
+      game.wordIndex += 1
+      if (game.wordIndex >= game.words.length) beginWordMemoryReady(room)
+      else showWordMemoryWord(room)
+    })
+  })
+}
+
+function beginWordMemoryReady(room) {
+  const game = room.game
+  game.phase = 'be_ready'
+  game.phaseEndsAt = Date.now() + WORD_MEMORY_READY_MS
+  broadcastRoom(room, 'game_state')
+  scheduleGame(room, WORD_MEMORY_READY_MS, () => beginWordMemoryAnswers(room))
+}
+
+function wordMemoryWrongAnswer(answer, questionType) {
+  if (questionType === 'letter') return answer === 'z' ? 'y' : 'z'
+  const fallback = answer === 'memory' ? 'puzzle' : 'memory'
+  return fallback
+}
+
+function beginWordMemoryAnswers(room) {
+  const game = room.game
+  game.phase = 'answering'
+  game.phaseEndsAt = Date.now() + WORD_MEMORY_ANSWER_MS
+  game.answers = new Map()
+  broadcastRoom(room, 'game_state')
+  scheduleGame(room, WORD_MEMORY_ANSWER_MS, () => lockWordMemoryAnswers(room))
+  game.botTimers = activeWordMemoryPlayers(room)
+    .map((playerId) => findPlayer(room, playerId)?.player)
+    .filter((player) => player?.bot)
+    .map((player) => setTimeout(() => {
+      if (room.game?.id !== 'word_memory_challenge' || room.game.phase !== 'answering') return
+      const answer = Math.random() < WORD_MEMORY_BOT_CORRECT_CHANCE
+        ? game.question.answer
+        : wordMemoryWrongAnswer(game.question.answer, game.question.type)
+      submitWordMemoryAnswer(room, player.id, answer)
+    }, 350 + Math.floor(Math.random() * 1_250)))
+}
+
+function maybeLockWordMemoryAnswers(room) {
+  const activePlayers = activeWordMemoryPlayers(room)
+  if (activePlayers.every((playerId) => room.game.answers.has(playerId))) lockWordMemoryAnswers(room)
+}
+
+function submitWordMemoryAnswer(room, clientId, value) {
+  const game = room.game
+  if (!game || game.id !== 'word_memory_challenge' || game.phase !== 'answering') return false
+  if (!activeWordMemoryPlayers(room).includes(clientId) || game.answers.has(clientId)) return false
+  const raw = String(value || '')
+  if (raw && !/^[a-z]+$/i.test(raw)) return false
+  game.answers.set(clientId, normalizeWordMemoryAnswer(raw))
+  broadcastRoom(room, 'game_state')
+  maybeLockWordMemoryAnswers(room)
+  return true
+}
+
+function lockWordMemoryAnswers(room) {
+  const game = room.game
+  if (!game || game.id !== 'word_memory_challenge' || game.phase !== 'answering') return
+  activeWordMemoryPlayers(room).forEach((playerId) => {
+    if (!game.answers.has(playerId)) game.answers.set(playerId, '')
+  })
+  game.phase = 'answers_locked'
+  game.phaseEndsAt = Date.now() + WORD_MEMORY_REVEAL_MS
+  broadcastRoom(room, 'game_state')
+  scheduleGame(room, WORD_MEMORY_REVEAL_MS, () => revealWordMemoryAnswer(room))
+}
+
+function revealWordMemoryAnswer(room) {
+  const game = room.game
+  const survivors = activeWordMemoryPlayers(room)
+  game.correctPlayerIds = survivors.filter((playerId) => game.answers.get(playerId) === game.question.answer)
+  game.eliminatedIds.push(...survivors.filter((playerId) => !game.correctPlayerIds.includes(playerId)))
+  game.phase = 'reveal'
+  game.phaseEndsAt = Date.now() + WORD_MEMORY_REVEAL_MS
+  broadcastRoom(room, 'game_state')
+  scheduleGame(room, WORD_MEMORY_REVEAL_MS, () => finishWordMemoryRound(room))
+}
+
+function finishWordMemoryRound(room) {
+  const game = room.game
+  game.phase = 'round_result'
+  game.phaseEndsAt = Date.now() + WORD_MEMORY_RESULT_MS
+  broadcastRoom(room, 'game_state')
+  scheduleGame(room, WORD_MEMORY_RESULT_MS, () => {
+    const remaining = activeWordMemoryPlayers(room)
+    if (remaining.length <= 1 || game.round >= game.maxRounds) return completeWordMemoryGame(room, remaining)
+    game.round += 1
+    beginWordMemoryRound(room)
+  })
+}
+
+function startWordMemoryGame(room) {
+  const playerIds = tournamentGamePlayers(room)
+  room.game = {
+    id: 'word_memory_challenge',
+    round: 1,
+    maxRounds: maxRoundsForRoom(room, 'word_memory_challenge', 3),
+    phase: 'round_intro',
+    phaseEndsAt: null,
+    words: [],
+    wordIndex: 0,
+    question: null,
+    answers: new Map(),
+    correctPlayerIds: [],
+    eliminatedIds: [],
+    winnerId: null,
+    usedPhrases: [],
+    timer: null,
+    botTimers: [],
+    playerIds,
+  }
+  broadcastRoom(room, 'game_started')
+  beginWordMemoryRound(room)
+}
+
 function activeImpostorColorPlayers(room) {
   return room.game.playerIds.filter((playerId) =>
     !room.game.eliminatedIds.includes(playerId) && findPlayer(room, playerId),
@@ -1116,6 +1373,25 @@ function removeGuessTimePlayer(room, clientId) {
   return true
 }
 
+function removeWordMemoryPlayer(room, clientId) {
+  const game = room.game
+  if (!game || game.id !== 'word_memory_challenge') return removePlayer(room, clientId)
+  if (!removePlayer(room, clientId)) return false
+
+  game.playerIds = game.playerIds.filter((playerId) => playerId !== clientId)
+  game.eliminatedIds = game.eliminatedIds.filter((playerId) => playerId !== clientId)
+  game.correctPlayerIds = game.correctPlayerIds.filter((playerId) => playerId !== clientId)
+  game.answers.delete(clientId)
+  const survivors = activeWordMemoryPlayers(room)
+  if (game.phase === 'complete' || survivors.length <= 1) {
+    completeWordMemoryGame(room, survivors)
+    return true
+  }
+  if (game.phase === 'answering') maybeLockWordMemoryAnswers(room)
+  else broadcastRoom(room, 'game_state')
+  return true
+}
+
 function removeImpostorColorPlayer(room, clientId) {
   const game = room.game
   if (!game || game.id !== 'impostor_color') return removePlayer(room, clientId)
@@ -1145,6 +1421,7 @@ function removeImpostorColorPlayer(room, clientId) {
 function removeGamePlayer(room, clientId) {
   if (room.game?.id === 'reaction_time') return removeReactionPlayer(room, clientId)
   if (room.game?.id === 'guess_the_time') return removeGuessTimePlayer(room, clientId)
+  if (room.game?.id === 'word_memory_challenge') return removeWordMemoryPlayer(room, clientId)
   if (room.game?.id === 'impostor_color') return removeImpostorColorPlayer(room, clientId)
   return removePlayer(room, clientId)
 }
@@ -1368,6 +1645,13 @@ wss.on('connection', (socket) => {
       if (room.game?.id !== 'guess_the_time') return reject(socket, 'Guess The Time is not active.')
       if (!submitTimeGuess(room, clientId, message.guess)) {
         return reject(socket, 'Enter one positive time from 0.01 to 10.99 with up to two decimal places.')
+      }
+      return
+    }
+    if (message.type === 'word_memory_submit') {
+      if (room.game?.id !== 'word_memory_challenge') return reject(socket, 'Word Memory Challenge is not active.')
+      if (!submitWordMemoryAnswer(room, clientId, message.answer)) {
+        return reject(socket, 'Enter letters only, then lock your answer.')
       }
       return
     }

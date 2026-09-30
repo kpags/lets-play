@@ -44,6 +44,10 @@ Original prompt: Let's create a browser game called "Let's Play!" using VueJS. U
 
 - 2026-09-30: Fixed oversized Impostor Color player cards on narrow screens. The game field now uses a two-row board/player layout when no status line exists, reserving the three-row layout only for visible status feedback; mobile player cards use compact content-sized grid rows. Browser checks at 532px and 390px reduced cards from 286px to 60px high, retained the active glow and player state labels, and found no overflow or console errors. Server syntax and a clean Vite verification build passed.
 
+- 2026-09-30: Added Word Memory Challenge as an authoritative Free For All game. The WebSocket server now chooses round-appropriate unused dataset phrases, controls word/blank/ready/answer/reveal/result timers, creates valid recall questions, validates letters-only case-insensitive locks, resolves bots at 60% correct, and applies game eliminations or Ranking winner/loser points. The responsive client view includes the shared game menu, three-second Round lead-in, word playback, Be Ready state, answer form, green letter reveal, and live player cards with spectator-safe states. Server syntax and a clean Vite verification build passed; isolated WebSocket/browser QA reached the authoritative first-word phase at mobile size without browser errors.
+
+- 2026-09-30: Refined Word Memory Challenge playback and answer reveal. The per-word counter is now hidden. Once all active players lock, the server enters a separate synchronized three-second answers-locked phase that exposes each submitted answer; the client renders these as responsive speech bubbles above player cards before showing the correct answer, letter highlight, and safe/out result. Mobile browser QA captured both human and bot answers in overlapping bubbles with matching rendered text state and zero console errors; server syntax and a clean Vite verification build passed.
+
 ## TODO
 
 - Add the remaining games and their authoritative session rules after Reaction Time.

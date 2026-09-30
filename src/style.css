@@ -1394,6 +1394,177 @@ button {
   color: #657076;
 }
 
+.word-memory-page {
+  background:
+    radial-gradient(circle at 50% 31%, rgb(255 252 219 / 0.95) 0, transparent 27rem),
+    linear-gradient(145deg, #effffc, #f8ffef 48%, #e6f8ff);
+}
+
+.word-memory-field {
+  display: grid;
+  grid-template-rows: minmax(12rem, 1fr) auto auto;
+  justify-items: center;
+  gap: clamp(0.65rem, 1.8vh, 1.1rem);
+  width: min(100%, 76rem);
+  min-height: 0;
+  margin: 0 auto;
+}
+
+.word-memory-field--with-status {
+  grid-template-rows: auto minmax(12rem, 1fr) auto auto;
+}
+
+.word-memory-field__status {
+  min-height: 1.5em;
+  margin: clamp(0.85rem, 3vh, 2.2rem) 0 0;
+  color: #17364d;
+  font-size: clamp(1rem, 2.3vw, 1.35rem);
+  font-weight: 900;
+  text-align: center;
+}
+
+.word-memory-prompt {
+  display: grid;
+  place-content: center;
+  justify-items: center;
+  width: min(100%, 50rem);
+  min-height: clamp(12rem, 29vh, 20rem);
+  padding: clamp(1rem, 3vmin, 2rem);
+  border: 1px solid rgb(36 126 157 / 0.32);
+  border-radius: clamp(1rem, 2.8vmin, 1.65rem);
+  color: #123d58;
+  text-align: center;
+  background:
+    radial-gradient(circle at 30% 20%, rgb(255 255 255 / 0.96), transparent 43%),
+    linear-gradient(145deg, rgb(225 252 255 / 0.9), rgb(245 255 232 / 0.86));
+  box-shadow: inset 0 1px 0 rgb(255 255 255 / 0.92), 0 0.7rem 1.9rem rgb(30 111 134 / 0.12);
+}
+
+.word-memory-prompt__countdown {
+  color: #258a65;
+  font-size: clamp(4rem, 14vmin, 8rem);
+  line-height: 0.9;
+}
+
+.word-memory-prompt__word {
+  max-width: 100%;
+  overflow-wrap: anywhere;
+  color: #156b91;
+  font-size: clamp(2.2rem, 8vmin, 5.75rem);
+  line-height: 1;
+  animation: word-memory-word-in 360ms cubic-bezier(0.2, 0.85, 0.25, 1) both;
+}
+
+@keyframes word-memory-word-in {
+  from { opacity: 0; transform: translateY(0.55rem) scale(0.94); }
+  to { opacity: 1; transform: translateY(0) scale(1); }
+}
+
+.word-memory-prompt__gap {
+  color: #76a5b5;
+  font-size: clamp(2rem, 6vmin, 3.5rem);
+  letter-spacing: 0.2em;
+}
+
+.word-memory-prompt__ready {
+  color: #246d77;
+  font-size: clamp(2rem, 6vmin, 4rem);
+}
+
+.word-memory-prompt--be_ready {
+  gap: 0.9rem;
+}
+
+.word-memory-prompt__question {
+  max-width: 44rem;
+  margin: 0;
+  font-size: clamp(1.35rem, 3.5vmin, 2.55rem);
+  font-weight: 900;
+  line-height: 1.2;
+}
+
+.word-memory-prompt__answer {
+  margin: clamp(0.8rem, 2.4vmin, 1.35rem) 0 0;
+  color: #1e6f89;
+  font-size: clamp(1.1rem, 2.8vmin, 1.75rem);
+  font-weight: 900;
+}
+
+.word-memory-prompt__letter {
+  display: inline-block;
+  min-width: 0.63em;
+  padding: 0.04em 0.08em;
+}
+
+.word-memory-prompt__letter--highlighted {
+  color: #fff;
+  border-radius: 0.23em;
+  background: #2ba861;
+  box-shadow: 0 0.1em 0.24em rgb(31 150 77 / 0.35);
+}
+
+.word-memory-prompt__complete {
+  color: #267b50;
+  font-size: clamp(1.8rem, 5vmin, 3.5rem);
+}
+
+.word-memory-form {
+  width: min(100%, 38rem);
+}
+
+.word-memory-player--safe {
+  border-color: rgb(54 168 95 / 0.48);
+  background: linear-gradient(145deg, rgb(235 255 233 / 0.98), rgb(191 244 203 / 0.92));
+}
+
+.word-memory-player--safe > span:last-child {
+  color: #238b53;
+}
+
+.word-memory-player {
+  position: relative;
+  overflow: visible;
+}
+
+.word-memory-player__answer-bubble {
+  position: absolute;
+  z-index: 3;
+  bottom: calc(100% + 0.55rem);
+  left: 50%;
+  max-width: min(14rem, calc(100vw - 2rem));
+  padding: 0.42rem 0.7rem;
+  overflow-wrap: anywhere;
+  color: #17415c;
+  border: 1px solid rgb(61 157 191 / 0.46);
+  border-radius: 1rem 1rem 1rem 0.28rem;
+  background: linear-gradient(145deg, rgb(255 255 255 / 0.97), rgb(207 247 255 / 0.95));
+  box-shadow: inset 0 1px 0 rgb(255 255 255 / 0.95), 0 0.35rem 0.85rem rgb(25 113 147 / 0.24);
+  font-size: clamp(0.75rem, 1.7vw, 0.95rem);
+  font-weight: 900;
+  line-height: 1.1;
+  text-align: center;
+  transform: translateX(-50%);
+  animation: word-memory-answer-bubble 260ms ease-out both;
+}
+
+.word-memory-player__answer-bubble::after {
+  position: absolute;
+  top: calc(100% - 1px);
+  left: 0.55rem;
+  width: 0.62rem;
+  height: 0.62rem;
+  border-right: 1px solid rgb(61 157 191 / 0.46);
+  border-bottom: 1px solid rgb(61 157 191 / 0.46);
+  background: #d7f8ff;
+  content: "";
+  transform: rotate(45deg) translateY(-0.33rem);
+}
+
+@keyframes word-memory-answer-bubble {
+  from { opacity: 0; transform: translateX(-50%) translateY(0.35rem) scale(0.92); }
+  to { opacity: 1; transform: translateX(-50%) translateY(0) scale(1); }
+}
+
 .impostor-color-page {
   background: radial-gradient(circle at 50% 36%, #f2fff4 0, #fff 43%, #e8f7fc 100%);
 }
@@ -1740,7 +1911,8 @@ button {
     grid-template-columns: repeat(3, minmax(0, 1fr));
   }
 
-  .guess-time-players {
+  .guess-time-players,
+  .word-memory-players {
     grid-template-columns: repeat(3, minmax(0, 1fr));
   }
 
@@ -1794,7 +1966,8 @@ button {
     grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 
-  .guess-time-players {
+  .guess-time-players,
+  .word-memory-players {
     grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 
@@ -1813,6 +1986,18 @@ button {
 
   .guess-time-field {
     grid-template-rows: auto minmax(13rem, 1fr) auto auto;
+  }
+
+  .word-memory-field {
+    grid-template-rows: minmax(12rem, 1fr) auto auto;
+  }
+
+  .word-memory-field--with-status {
+    grid-template-rows: auto minmax(12rem, 1fr) auto auto;
+  }
+
+  .word-memory-prompt {
+    min-height: 12rem;
   }
 }
 
@@ -1843,7 +2028,9 @@ button {
   .reaction-rank-move,
   .reaction-target--spectator-click,
   .guess-stopwatch--revealed .guess-stopwatch__time,
-  .guess-stopwatch--running {
+  .guess-stopwatch--running,
+  .word-memory-prompt__word,
+  .word-memory-player__answer-bubble {
     animation: none;
     transition: none;
   }

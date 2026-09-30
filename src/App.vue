@@ -13,6 +13,7 @@ const onlineRoom = ref(null)
 const reactionGame = ref(null)
 const reactionClickSubmitted = ref(false)
 const guessInput = ref('')
+const wordMemoryInput = ref('')
 const reactionClockNow = ref(Date.now())
 const reactionServerClockOffset = ref(0)
 const showReactionMenu = ref(false)
@@ -50,7 +51,7 @@ const gameCatalogs = {
   'Free For All': freeForAllCatalog,
   'For Fun': forFunCatalog,
 }
-const playableGameIds = new Set(['reaction_time', 'guess_the_time', 'impostor_color'])
+const playableGameIds = new Set(['reaction_time', 'guess_the_time', 'impostor_color', 'word_memory_challenge'])
 
 const playerCount = computed(
   () => teamOne.value.filter(Boolean).length + teamTwo.value.filter(Boolean).length,
@@ -143,6 +144,7 @@ const reactionTargetInteractive = computed(() =>
 )
 const reactionResultVisible = computed(() => reactionGame.value?.phase === 'result')
 const guessTimeGame = computed(() => reactionGame.value?.id === 'guess_the_time' ? reactionGame.value : null)
+const wordMemoryGame = computed(() => reactionGame.value?.id === 'word_memory_challenge' ? reactionGame.value : null)
 const impostorColorGame = computed(() => reactionGame.value?.id === 'impostor_color' ? reactionGame.value : null)
 const impostorSelectedBottle = computed(() => {
   const index = impostorColorGame.value?.selectedBottleIndex
@@ -160,6 +162,25 @@ const impostorPickCountdown = computed(() => {
   return Math.max(0, Math.ceil((impostorColorGame.value.phaseEndsAt - serverNow) / 1000))
 })
 const guessInputLocked = computed(() => guessTimeGame.value?.guessedPlayerIds?.includes(clientId))
+const wordMemoryInputLocked = computed(() => wordMemoryGame.value?.answeredPlayerIds?.includes(clientId))
+const wordMemoryCountdown = computed(() => {
+  if (!wordMemoryGame.value?.phaseEndsAt) return null
+  const serverNow = reactionClockNow.value + reactionServerClockOffset.value
+  return Math.max(0, Math.ceil((wordMemoryGame.value.phaseEndsAt - serverNow) / 1000))
+})
+const wordMemoryStatus = computed(() => {
+  const game = wordMemoryGame.value
+  if (!game) return ''
+  if (game.phase === 'round_intro') return `Round ${game.round} starts in ${wordMemoryCountdown.value}.`
+  if (game.phase === 'word_gap') return ''
+  if (game.phase === 'be_ready') return 'Be Ready'
+  if (game.phase === 'answering') return wordMemoryInputLocked.value ? 'Your answer is locked.' : 'Answer before time runs out.'
+  if (game.phase === 'answers_locked') return 'Answers locked.'
+  if (game.phase === 'reveal') return 'Correct answer'
+  if (game.phase === 'round_result') return `${game.correctPlayerIds.length} player${game.correctPlayerIds.length === 1 ? '' : 's'} safe.`
+  if (game.phase === 'complete') return game.winnerName ? `${game.winnerName} wins!` : 'Word Memory Challenge complete!'
+  return ''
+})
 const guessPreparationCountdown = computed(() => {
   if (guessTimeGame.value?.phase !== 'preparing' || !guessTimeGame.value.phaseEndsAt) return null
   const serverNow = reactionClockNow.value + reactionServerClockOffset.value
@@ -272,6 +293,7 @@ function applyRoomSnapshot(room, serverNow) {
   if (serverNow) reactionServerClockOffset.value = serverNow - Date.now()
   if (!room.game || room.game.phase !== 'target' || room.game.activePlayerId !== clientId) reactionClickSubmitted.value = false
   if (room.game?.id !== 'guess_the_time' || room.game.phase !== 'guessing') guessInput.value = ''
+  if (room.game?.id !== 'word_memory_challenge' || room.game.phase !== 'answering') wordMemoryInput.value = ''
   inviteCode.value = room.code
   roomMode.value = room.mode
   roomFormat.value = room.format
@@ -300,6 +322,7 @@ function handleRoomMessage(event) {
     joiningFromInviteDialog.value = false
     if (message.room.phase === 'playing' && message.room.game?.id === 'reaction_time') currentView.value = 'reaction'
     if (message.room.phase === 'playing' && message.room.game?.id === 'guess_the_time') currentView.value = 'guess-time'
+    if (message.room.phase === 'playing' && message.room.game?.id === 'word_memory_challenge') currentView.value = 'word-memory'
     if (message.room.phase === 'playing' && message.room.game?.id === 'impostor_color') currentView.value = 'impostor-color'
     onlineError.value = message.room.phase === 'playing' ? 'Game started — waiting for gameplay.' : ''
   } else if (message.type === 'room_closed') {
@@ -484,6 +507,15 @@ function submitTimeGuess() {
   sendRoom({ type: 'guess_time_submit', guess: value })
 }
 
+function normalizeWordMemoryInput(value) {
+  return String(value || '').replace(/[^a-z]/gi, '').slice(0, 32)
+}
+
+function submitWordMemoryAnswer() {
+  if (wordMemoryInputLocked.value || isTournamentSpectator.value) return
+  sendRoom({ type: 'word_memory_submit', answer: normalizeWordMemoryInput(wordMemoryInput.value) })
+}
+
 function closeSettings() {
   currentView.value = settingsReturnView.value
   settingsReturnView.value = 'landing'
@@ -577,6 +609,24 @@ const renderGameToText = () =>
         secondsRemaining: guessCountdown.value,
         guessLocked: guessInputLocked.value,
         players: guessTimeGame.value.players,
+      },
+    }),
+    ...(currentView.value === 'word-memory' && wordMemoryGame.value && {
+      game: {
+        id: wordMemoryGame.value.id,
+        round: wordMemoryGame.value.round,
+        maxRounds: wordMemoryGame.value.maxRounds,
+        phase: wordMemoryGame.value.phase,
+        word: wordMemoryGame.value.currentWord,
+        question: wordMemoryGame.value.question,
+        secondsRemaining: wordMemoryCountdown.value,
+        answerLocked: wordMemoryInputLocked.value,
+        submittedAnswers: wordMemoryGame.value.players
+          .filter((player) => player.answer !== null)
+          .map((player) => ({ playerId: player.playerId, answer: player.answer })),
+        correctPlayerIds: wordMemoryGame.value.correctPlayerIds,
+        eliminatedIds: wordMemoryGame.value.eliminatedIds,
+        players: wordMemoryGame.value.players,
       },
     }),
     ...(currentView.value === 'impostor-color' && impostorColorGame.value && {
@@ -834,6 +884,100 @@ onBeforeUnmount(() => {
             {{ entry.guess === null ? 'No guess' : `${entry.guess.toFixed(2)} s` }}
           </span>
           <span v-else>{{ guessTimeGame?.guessedPlayerIds.includes(entry.playerId) ? 'Locked' : 'Waiting' }}</span>
+          <small v-if="isRankingFormat">{{ tournamentPoints(entry.playerId) }} pts</small>
+        </article>
+      </TransitionGroup>
+    </section>
+  </main>
+
+  <main v-else-if="currentView === 'word-memory' || gameInstructions?.game?.id === 'word_memory_challenge'" class="reaction-page word-memory-page" aria-labelledby="word-memory-title">
+    <header class="reaction-page__header">
+      <button
+        class="reaction-menu-trigger"
+        type="button"
+        aria-label="Open game menu"
+        aria-controls="word-memory-game-menu"
+        :aria-expanded="showReactionMenu"
+        @click="toggleReactionMenu"
+      >
+        <span aria-hidden="true">⚙</span>
+      </button>
+      <div>
+        <p>Let's Play!</p>
+        <h1 id="word-memory-title">Word Memory Challenge</h1>
+      </div>
+      <p class="reaction-page__round">Round {{ wordMemoryGame?.round }} / {{ wordMemoryGame?.maxRounds }}</p>
+
+      <section v-if="showReactionMenu" id="word-memory-game-menu" class="reaction-menu" aria-label="Game menu">
+        <button type="button" @click="resumeReaction">Resume</button>
+        <button type="button" @click="openReactionSettings">Settings</button>
+        <button class="reaction-menu__quit" type="button" @click="quitActiveGame">Quit</button>
+      </section>
+    </header>
+
+    <section class="word-memory-field" :class="{ 'word-memory-field--with-status': wordMemoryStatus }" aria-live="polite">
+      <p v-if="wordMemoryStatus" class="word-memory-field__status">{{ wordMemoryStatus }}</p>
+
+      <div class="word-memory-prompt" :class="`word-memory-prompt--${wordMemoryGame?.phase || 'waiting'}`">
+        <strong v-if="wordMemoryGame?.phase === 'round_intro'" class="word-memory-prompt__countdown">{{ wordMemoryCountdown }}</strong>
+        <strong v-else-if="wordMemoryGame?.phase === 'showing_word'" class="word-memory-prompt__word">{{ wordMemoryGame?.currentWord }}</strong>
+        <span v-else-if="wordMemoryGame?.phase === 'word_gap'" class="word-memory-prompt__gap" aria-label="Brief pause">• • •</span>
+        <template v-else-if="wordMemoryGame?.phase === 'be_ready'">
+          <strong class="word-memory-prompt__ready">Be Ready</strong>
+          <span class="word-memory-prompt__countdown">{{ wordMemoryCountdown }}</span>
+        </template>
+        <template v-else-if="['answering', 'answers_locked', 'reveal', 'round_result'].includes(wordMemoryGame?.phase)">
+          <p class="word-memory-prompt__question">{{ wordMemoryGame?.question }}</p>
+          <p v-if="['reveal', 'round_result'].includes(wordMemoryGame?.phase)" class="word-memory-prompt__answer">
+            <span>Answer: </span>
+            <template v-if="wordMemoryGame?.answerLetterIndex !== null && wordMemoryGame?.answerLetterIndex !== undefined">
+              <span v-for="(letter, index) in wordMemoryGame?.answerWord || ''" :key="`${letter}-${index}`" :class="{ 'word-memory-prompt__letter--highlighted': index === wordMemoryGame?.answerLetterIndex }" class="word-memory-prompt__letter">{{ letter }}</span>
+            </template>
+            <strong v-else>{{ wordMemoryGame?.answer }}</strong>
+          </p>
+        </template>
+        <strong v-else-if="wordMemoryGame?.phase === 'complete'" class="word-memory-prompt__complete">{{ wordMemoryGame?.winnerName || 'Round complete' }}</strong>
+      </div>
+
+      <form
+        v-if="wordMemoryGame?.phase === 'answering' && !wordMemoryGame.eliminatedIds.includes(clientId) && !isTournamentSpectator"
+        class="guess-time-form word-memory-form"
+        @submit.prevent="submitWordMemoryAnswer"
+      >
+        <label for="word-memory-input">Your answer</label>
+        <div>
+          <input
+            id="word-memory-input"
+            v-model="wordMemoryInput"
+            type="text"
+            inputmode="text"
+            autocomplete="off"
+            spellcheck="false"
+            placeholder="Letters only"
+            :disabled="wordMemoryInputLocked || showReactionMenu"
+            @input="wordMemoryInput = normalizeWordMemoryInput(wordMemoryInput)"
+          />
+          <button class="guess-time-form__lock" type="submit" :disabled="wordMemoryInputLocked || showReactionMenu">{{ wordMemoryInputLocked ? 'Locked' : 'Lock answer' }}</button>
+        </div>
+        <small>{{ wordMemoryCountdown }} seconds remaining</small>
+      </form>
+
+      <TransitionGroup name="reaction-rank" tag="section" class="guess-time-players word-memory-players" aria-label="Word Memory Challenge players">
+        <article
+          v-for="entry in wordMemoryGame?.players || []"
+          :key="entry.playerId"
+          class="guess-time-player word-memory-player"
+          :class="{
+            'guess-time-player--eliminated': entry.eliminated,
+            'word-memory-player--safe': ['round_result', 'complete'].includes(wordMemoryGame?.phase) && wordMemoryGame?.correctPlayerIds.includes(entry.playerId),
+          }"
+        >
+          <span class="reaction-leaderboard__rank">{{ entry.rank }}</span>
+          <strong>{{ entry.playerName }}</strong>
+          <span v-if="wordMemoryGame?.phase === 'answers_locked'" class="word-memory-player__answer-bubble">{{ entry.answer || 'No answer' }}</span>
+          <span v-if="entry.eliminated">Out</span>
+          <span v-else-if="['round_result', 'complete'].includes(wordMemoryGame?.phase)">{{ wordMemoryGame?.correctPlayerIds.includes(entry.playerId) ? 'Safe' : 'Out' }}</span>
+          <span v-else>{{ wordMemoryGame?.answeredPlayerIds.includes(entry.playerId) ? 'Locked' : 'Thinking' }}</span>
           <small v-if="isRankingFormat">{{ tournamentPoints(entry.playerId) }} pts</small>
         </article>
       </TransitionGroup>
