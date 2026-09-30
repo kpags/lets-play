@@ -1400,10 +1400,14 @@ button {
 
 .impostor-color-field {
   display: grid;
-  grid-template-rows: auto minmax(0, 1fr) auto;
+  grid-template-rows: minmax(0, 1fr) auto;
   width: min(100%, 76rem);
   min-height: 0;
   margin: 0 auto;
+}
+
+.impostor-color-field--with-status {
+  grid-template-rows: auto minmax(0, 1fr) auto;
 }
 
 .impostor-color-field__status {
@@ -1432,7 +1436,8 @@ button {
   position: relative;
   display: grid;
   justify-items: center;
-  width: 100%;
+  width: 75%;
+  justify-self: center;
   border: 0;
   padding: 0;
   color: #17364d;
@@ -1441,9 +1446,14 @@ button {
   transition: opacity 240ms ease, transform 240ms ease, filter 240ms ease;
 }
 
-.impostor-bottle:not(:disabled):hover {
-  filter: brightness(1.06);
-  transform: translateY(-0.25rem) scale(1.04);
+.impostor-bottle:not(:disabled):is(:hover, :focus-visible) {
+  filter: brightness(1.08);
+  transform: translateY(-0.3rem) scale(1.045);
+}
+
+.impostor-bottle:not(:disabled):is(:hover, :focus-visible) .impostor-bottle__glass {
+  border-color: #48bce0;
+  box-shadow: inset 0 0 0 1px rgb(255 255 255 / 0.92), 0 0.5rem 1rem rgb(36 150 191 / 0.34), 0 0 0 0.14rem rgb(131 232 255 / 0.24);
 }
 
 .impostor-bottle:focus-visible {
@@ -1662,6 +1672,19 @@ button {
   color: #7a4306;
 }
 
+.impostor-color-player--current {
+  border-color: #b7dd32 !important;
+  color: #123a41 !important;
+  background: linear-gradient(135deg, #f2ffb4 0%, #d9f77a 48%, #a9dc4c 100%) !important;
+  box-shadow: 0 0 0 0.18rem rgb(226 255 111 / 0.4), 0 0.45rem 1.1rem rgb(118 164 29 / 0.32), 0 0 1.05rem rgb(191 232 61 / 0.28);
+  animation: impostor-player-turn 1.25s ease-in-out infinite alternate;
+}
+
+.impostor-color-player--current span,
+.impostor-color-player--current small {
+  color: #245d2b;
+}
+
 .impostor-color-player--afk-out {
   border-color: #b62d36 !important;
   color: #fff !important;
@@ -1672,6 +1695,11 @@ button {
 
 .impostor-color-player--afk-out span {
   color: #fff3f3;
+}
+
+@keyframes impostor-player-turn {
+  from { box-shadow: 0 0 0 0.12rem rgb(226 255 111 / 0.3), 0 0.3rem 0.75rem rgb(118 164 29 / 0.24), 0 0 0.7rem rgb(191 232 61 / 0.16); }
+  to { box-shadow: 0 0 0 0.24rem rgb(235 255 137 / 0.68), 0 0.55rem 1.25rem rgb(118 164 29 / 0.46), 0 0 1.2rem rgb(191 232 61 / 0.38); }
 }
 
 @keyframes impostor-bottle-focus {
@@ -1772,10 +1800,14 @@ button {
 
   .impostor-color-players {
     grid-template-columns: repeat(2, minmax(0, 1fr));
+    grid-auto-rows: min-content;
+    align-items: start;
     gap: 0.45rem;
   }
 
   .impostor-color-players article {
+    min-height: 3.75rem;
+    align-content: center;
     font-size: 0.76rem;
   }
 
@@ -1832,6 +1864,19 @@ button {
   .reaction-menu-trigger:active,
   .reaction-menu button:hover {
     transform: none;
+  }
+
+  .impostor-bottle {
+    transition: none;
+  }
+
+  .impostor-bottle:not(:disabled):is(:hover, :focus-visible) {
+    transform: none;
+  }
+
+  .impostor-color-player--current {
+    animation: none;
+    box-shadow: 0 0 0 0.18rem rgb(226 255 111 / 0.45), 0 0.45rem 1.1rem rgb(118 164 29 / 0.34), 0 0 1rem rgb(191 232 61 / 0.3);
   }
 }
 

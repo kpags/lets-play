@@ -30,6 +30,7 @@ const copyLabel = ref('Copy')
 const roomMode = ref('Free For All')
 const roomFormat = ref('Elimination')
 const maxGames = ref('5')
+const lastStandardMaxGames = ref('5')
 const teamOne = ref([{ id: 'host', name: 'Host', ready: false }, null, null, null, null])
 const teamTwo = ref([null, null, null, null, null])
 const clientId = localStorage.getItem('lets-play-client-id') || createClientId()
@@ -104,6 +105,11 @@ const podiumElapsed = computed(() => {
   const serverNow = reactionClockNow.value + reactionServerClockOffset.value
   return Math.max(0, serverNow - onlineRoom.value.tournament.completedAt)
 })
+const noEliminationWinner = computed(() =>
+  onlineRoom.value?.tournament?.format === 'Elimination'
+  && onlineRoom.value.tournament.complete
+  && !onlineRoom.value.tournament.winnerId,
+)
 const rankingPodiumGroups = computed(() => {
   const standings = onlineRoom.value?.tournament?.standings || []
   return [
@@ -207,13 +213,10 @@ const impostorColorStatus = computed(() => {
   if (game.phase === 'complete') return game.winnerName ? `${game.winnerName} wins!` : 'All red bottles have been found.'
   if (game.phase === 'farewell') return 'Saying goodbye to eliminated players…'
   if (game.phase === 'returning') return 'Returning the last bottle…'
-  if (game.phase === 'aww') return `${game.eliminatedPlayerName} found a red bottle.`
+  if (game.phase === 'aww') return ''
   if (game.phase === 'afk_eliminated') return `${game.eliminatedPlayerName} was eliminated due to AFK.`
   if (game.phase === 'warning') return `${game.currentPlayerName} received an AFK warning.`
-  if (['shaking', 'revealing', 'safe', 'turn_delay'].includes(game.phase)) return ''
-  return game.currentPlayerId === clientId
-    ? `${impostorPickCountdown.value ?? 0} seconds to choose a bottle to shake.`
-    : `${game.currentPlayerName}'s turn`
+  return ''
 })
 
 function createInviteCode() {
@@ -273,6 +276,7 @@ function applyRoomSnapshot(room, serverNow) {
   roomMode.value = room.mode
   roomFormat.value = room.format
   maxGames.value = String(room.maxGames)
+  if (room.lastStandardMaxGames) lastStandardMaxGames.value = String(room.lastStandardMaxGames)
   manualGames.value = Boolean(room.manualGames)
   selectedGames.value = room.selectedGames || []
   if (!manualGames.value) showGameChooser.value = false
@@ -382,6 +386,14 @@ async function joinOnlineRoom(code, fromInviteDialog = false) {
 }
 
 function updateRoomSettings() {
+  if (roomMode.value === 'For Fun') {
+    if (maxGames.value !== '1') lastStandardMaxGames.value = maxGames.value
+    maxGames.value = '1'
+  } else if (maxGames.value === '1') {
+    maxGames.value = lastStandardMaxGames.value
+  } else {
+    lastStandardMaxGames.value = maxGames.value
+  }
   sendRoom({ type: 'update_settings', mode: roomMode.value, format: roomFormat.value, maxGames: Number(maxGames.value) })
 }
 
@@ -853,8 +865,12 @@ onBeforeUnmount(() => {
       </section>
     </header>
 
-    <section class="impostor-color-field" aria-live="polite">
-      <p class="impostor-color-field__status">{{ impostorColorStatus }}</p>
+    <section
+      class="impostor-color-field"
+      :class="{ 'impostor-color-field--with-status': impostorColorStatus }"
+      aria-live="polite"
+    >
+      <p v-if="impostorColorStatus" class="impostor-color-field__status">{{ impostorColorStatus }}</p>
       <div class="impostor-color-board">
         <div class="impostor-color-grid" aria-label="Bottle selection grid">
           <button
@@ -904,6 +920,9 @@ onBeforeUnmount(() => {
           :key="player.playerId"
           :class="{
             'impostor-color-player--warning': player.warningCount > 0 && !player.eliminated,
+            'impostor-color-player--current': impostorColorGame?.phase === 'picking'
+              && player.playerId === impostorColorGame?.currentPlayerId
+              && !player.eliminated,
             'impostor-color-player--afk-out': player.eliminatedByAfk,
             'impostor-color-player--out': player.eliminated && !player.eliminatedByAfk,
           }"
@@ -949,7 +968,7 @@ onBeforeUnmount(() => {
           </select>
         </label>
 
-        <label class="room-field">
+        <label v-if="roomMode !== 'For Fun'" class="room-field">
           <span class="room-field__label">Max Games</span>
           <select v-model="maxGames" :disabled="!isRoomHost || !roomIsLobby" @change="updateRoomSettings">
             <option>3</option>
@@ -1151,8 +1170,10 @@ onBeforeUnmount(() => {
       <template v-if="roomFormat === 'Elimination'">
         <p class="instructions-dialog__eyebrow">Tournament complete</p>
         <h2 id="podium-dialog-title">The Last Man Standing is</h2>
-        <p v-if="podiumElapsed >= 1_500" class="podium-dialog__winner">{{ onlineRoom?.tournament?.winnerName }}</p>
-        <div v-if="podiumElapsed >= 1_500" class="podium-confetti" aria-hidden="true"><i v-for="index in 18" :key="index"></i></div>
+        <p v-if="noEliminationWinner || podiumElapsed >= 1_500" class="podium-dialog__winner">
+          {{ noEliminationWinner ? 'No One!' : onlineRoom?.tournament?.winnerName }}
+        </p>
+        <div v-if="!noEliminationWinner && podiumElapsed >= 1_500" class="podium-confetti" aria-hidden="true"><i v-for="index in 18" :key="index"></i></div>
       </template>
 
       <template v-else>

@@ -21,7 +21,7 @@ const GUESS_TIME_MIN_CENTISECONDS = 100
 const GUESS_TIME_MAX_CENTISECONDS = 1_099
 const INSTRUCTION_DURATION_MS = 30_000
 const IMPOSTOR_COLOR_BOTTLE_COUNT = 12
-const IMPOSTOR_COLOR_RED_BOTTLE_COUNT = 1
+const IMPOSTOR_COLOR_RED_BOTTLE_COUNT = 2
 const IMPOSTOR_COLOR_SHAKE_MS = 1_500
 const IMPOSTOR_COLOR_REVEAL_MS = 800
 const IMPOSTOR_COLOR_AWW_MS = 2_000
@@ -69,6 +69,20 @@ function playableGameIdsForMode(mode) {
 
 function gameDefinition(room, gameId) {
   return gameCatalogForMode(room.mode).find((game) => game.id === gameId)
+}
+
+function gameNumberSetting(room, gameId, setting, fallback) {
+  const value = Number(gameDefinition(room, gameId)?.[setting])
+  return Number.isInteger(value) && value > 0 ? value : fallback
+}
+
+function maxRoundsForRoom(room, gameId, defaultMaxRounds) {
+  if (room.format === 'Ranking') return 1
+  return gameNumberSetting(room, gameId, 'rounds', defaultMaxRounds)
+}
+
+function maxEliminationsForRound(room, gameId) {
+  return gameNumberSetting(room, gameId, 'max_eliminations_per_round', 1)
 }
 
 function createCode() {
@@ -133,6 +147,7 @@ function roomView(room) {
     mode: room.mode,
     format: room.format,
     maxGames: room.maxGames,
+    lastStandardMaxGames: room.lastStandardMaxGames,
     manualGames: room.manualGames,
     selectedGames: room.selectedGames,
     phase: room.phase,
@@ -616,14 +631,14 @@ function recordReaction(room, clientId) {
 
 function finishReactionRound(room) {
   const game = room.game
-  const slowest = game.results.reduce((current, result) =>
-    !current || result.reactionTime > current.reactionTime ? result : current,
-  null)
-  if (!slowest) return
+  const slowestPlayers = [...game.results]
+    .sort((left, right) => right.reactionTime - left.reactionTime)
+    .slice(0, maxEliminationsForRound(room, game.id))
+  if (!slowestPlayers.length) return
 
   if (!usesPlacementRanking(room, game.id)) {
-    game.eliminatedIds.push(slowest.playerId)
-    game.eliminatedPlayerId = slowest.playerId
+    game.eliminatedIds.push(...slowestPlayers.map((player) => player.playerId))
+    game.eliminatedPlayerId = slowestPlayers[0].playerId
   }
   sortReactionLeaderboard(game)
   game.phase = 'round_result'
@@ -655,8 +670,7 @@ function startReactionTimeGame(room) {
   room.game = {
     id: 'reaction_time',
     round: 1,
-    // Elimination tournaments remove one player per game, so every game has one round.
-    maxRounds: room.format === 'Elimination' ? 1 : REACTION_TIME_ROUNDS,
+    maxRounds: maxRoundsForRoom(room, 'reaction_time', REACTION_TIME_ROUNDS),
     turnIndex: 0,
     playerIds,
     eliminatedIds: [],
@@ -767,18 +781,17 @@ function submitTimeGuess(room, clientId, value) {
 function finishGuessTimeRound(room) {
   const game = room.game
   const survivors = activeGuessTimePlayers(room)
-  const farthest = survivors.reduce((current, playerId) => {
+  const farthestPlayers = survivors.map((playerId) => {
     const guess = game.guesses.get(playerId)
     const difference = Number.isFinite(guess) ? Math.abs(guess - game.stopwatchTime) : Number.POSITIVE_INFINITY
-    return !current || difference > current.difference
-      ? { playerId, difference }
-      : current
-  }, null)
-  if (!farthest) return completeGuessTimeGame(room, survivors)
+    return { playerId, difference }
+  }).sort((left, right) => right.difference - left.difference)
+    .slice(0, maxEliminationsForRound(room, game.id))
+  if (!farthestPlayers.length) return completeGuessTimeGame(room, survivors)
 
   if (!usesPlacementRanking(room, game.id)) {
-    game.eliminatedIds.push(farthest.playerId)
-    game.eliminatedPlayerId = farthest.playerId
+    game.eliminatedIds.push(...farthestPlayers.map((player) => player.playerId))
+    game.eliminatedPlayerId = farthestPlayers[0].playerId
   }
   game.phase = 'round_result'
   game.phaseEndsAt = Date.now() + GUESS_TIME_RESULT_MS
@@ -799,8 +812,7 @@ function startGuessTimeGame(room) {
   room.game = {
     id: 'guess_the_time',
     round: 1,
-    // Elimination tournaments remove one player per game, so every game has one round.
-    maxRounds: room.format === 'Elimination' ? 1 : GUESS_TIME_ROUNDS,
+    maxRounds: maxRoundsForRoom(room, 'guess_the_time', GUESS_TIME_ROUNDS),
     phase: 'preparing',
     phaseEndsAt: null,
     startedAt: null,
@@ -838,11 +850,12 @@ function nextImpostorColorPlayer(room, currentPlayerId) {
 
 function finishImpostorColorGame(room) {
   const game = room.game
+  const activePlayers = activeImpostorColorPlayers(room)
   clearGameTimer(room)
   game.phase = 'complete'
   game.phaseEndsAt = null
   game.currentPlayerId = null
-  game.winnerId = activeImpostorColorPlayers(room).length === 1 ? activeImpostorColorPlayers(room)[0] : null
+  game.winnerId = activePlayers.length === 1 ? activePlayers[0] : null
   finalizeTournamentGame(room, game)
   broadcastRoom(room, 'game_state')
   beginIntermission(room)
@@ -866,15 +879,16 @@ function beginImpostorColorFarewell(room) {
 function setImpostorColorTurn(room) {
   const game = room.game
   if (!game || game.id !== 'impostor_color') return
-  if (!activeImpostorColorPlayers(room).length || !game.bottles.some((bottle) => bottle.state === 'unpicked')) {
+  const activePlayers = activeImpostorColorPlayers(room)
+  if (activePlayers.length <= 1 || !game.bottles.some((bottle) => bottle.state === 'unpicked')) {
     return finishImpostorColorGame(room)
   }
   game.phase = 'picking'
   game.phaseEndsAt = Date.now() + IMPOSTOR_COLOR_PICK_MS
   game.selectedBottleIndex = null
   game.eliminatedPlayerId = null
-  if (!game.currentPlayerId || !activeImpostorColorPlayers(room).includes(game.currentPlayerId)) {
-    game.currentPlayerId = activeImpostorColorPlayers(room)[0]
+  if (!game.currentPlayerId || !activePlayers.includes(game.currentPlayerId)) {
+    game.currentPlayerId = activePlayers[0]
   }
   broadcastRoom(room, 'game_state')
 
@@ -894,10 +908,10 @@ function setImpostorColorTurn(room) {
 function continueImpostorColorGame(room, previousPlayerId) {
   const game = room.game
   if (!game || game.id !== 'impostor_color') return
+  if (activeImpostorColorPlayers(room).length <= 1) return finishImpostorColorGame(room)
   if (game.bottles.filter((bottle) => bottle.state === 'revealed' && bottle.color === 'red').length >= IMPOSTOR_COLOR_RED_BOTTLE_COUNT) {
     return beginImpostorColorFarewell(room)
   }
-  if (!activeImpostorColorPlayers(room).length) return finishImpostorColorGame(room)
   game.currentPlayerId = nextImpostorColorPlayer(room, previousPlayerId)
   game.phase = 'turn_delay'
   game.phaseEndsAt = Date.now() + IMPOSTOR_COLOR_TURN_DELAY_MS
@@ -1174,6 +1188,7 @@ function createRoom(clientId) {
     mode: 'Free For All',
     format: 'Elimination',
     maxGames: 5,
+    lastStandardMaxGames: 5,
     manualGames: false,
     selectedGames: [],
     phase: 'lobby',
@@ -1288,12 +1303,21 @@ wss.on('connection', (socket) => {
     if (message.type === 'update_settings') {
       if (room.hostId !== clientId) return reject(socket, 'Only the host can change room settings.')
       if (room.phase !== 'lobby') return reject(socket, 'Settings can only be changed in the lobby.')
-      if (!ROOM_MODES.has(message.mode) || !MAX_GAMES.has(Number(message.maxGames)) || !TOURNAMENT_FORMATS.has(message.format)) {
+      const requestedMaxGames = Number(message.maxGames)
+      if (!ROOM_MODES.has(message.mode)
+        || !TOURNAMENT_FORMATS.has(message.format)
+        || (message.mode !== 'For Fun' && !MAX_GAMES.has(requestedMaxGames))) {
         return reject(socket, 'Unsupported room settings.')
       }
       room.mode = message.mode
       room.format = message.format
-      room.maxGames = Number(message.maxGames)
+      if (room.mode === 'For Fun') {
+        if (MAX_GAMES.has(requestedMaxGames)) room.lastStandardMaxGames = requestedMaxGames
+        room.maxGames = 1
+      } else {
+        room.maxGames = requestedMaxGames
+        room.lastStandardMaxGames = requestedMaxGames
+      }
       const playableGameIds = playableGameIdsForMode(room.mode)
       room.selectedGames = room.selectedGames
         .filter((gameId) => playableGameIds.has(gameId))
