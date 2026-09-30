@@ -166,6 +166,11 @@ function roomView(room) {
     lastStandardMaxGames: room.lastStandardMaxGames,
     manualGames: room.manualGames,
     selectedGames: room.selectedGames,
+    overtime: {
+      active: room.scheduledGameCount > 0 && room.gameIndex >= room.scheduledGameCount,
+      pending: Boolean(room.overtimePending),
+      count: room.overtimeGameCount,
+    },
     phase: room.phase,
     instructions: room.instructions && {
       game: room.instructions.game,
@@ -175,6 +180,7 @@ function roomView(room) {
     intermission: room.intermission && {
       endsAt: room.intermission.endsAt,
       acknowledgedPlayerIds: [...room.intermission.acknowledgedPlayerIds],
+      overtime: Boolean(room.intermission.overtime),
     },
     tournament: tournamentView(room),
     game: room.game ? gameView(room) : null,
@@ -536,8 +542,26 @@ function randomGameQueue(mode, maxGames) {
   return queue.slice(0, maxGames)
 }
 
+function overtimeGamePool(room) {
+  const playableGameIds = playableGameIdsForMode(room.mode)
+  const selectedGames = room.selectedGames.filter((gameId) => playableGameIds.has(gameId))
+  return room.manualGames && selectedGames.length
+    ? selectedGames
+    : [...playableGameIds]
+}
+
+function shouldQueueOvertimeGame(room) {
+  return room.tournament?.format === 'Elimination'
+    && tournamentGamePlayers(room).length > 1
+    && room.gameIndex >= room.gameQueue.length - 1
+}
+
 function hasNextTournamentGame(room) {
-  if (room.tournament?.format === 'Elimination' && tournamentGamePlayers(room).length <= 1) return false
+  if (room.tournament?.format === 'Elimination') {
+    if (tournamentGamePlayers(room).length <= 1) return false
+    if (room.gameIndex < room.gameQueue.length - 1) return true
+    return overtimeGamePool(room).length > 0
+  }
   return room.gameIndex < room.gameQueue.length - 1
 }
 
@@ -545,11 +569,24 @@ function advanceGameQueue(room) {
   if (!hasNextTournamentGame(room)) {
     completeTournament(room)
     room.intermission = null
+    room.overtimePending = false
     broadcastRoom(room, 'game_state')
     return false
   }
   clearGameTimer(room)
   room.intermission = null
+  if (shouldQueueOvertimeGame(room)) {
+    const gamePool = overtimeGamePool(room)
+    const gameId = gamePool[Math.floor(Math.random() * gamePool.length)]
+    if (!gameId) {
+      completeTournament(room)
+      broadcastRoom(room, 'game_state')
+      return false
+    }
+    room.gameQueue.push(gameId)
+    room.overtimeGameCount += 1
+  }
+  room.overtimePending = false
   room.gameIndex += 1
   beginInstructions(room)
   return true
@@ -572,13 +609,16 @@ function maybeAdvanceIntermission(room) {
 function beginIntermission(room) {
   if (!hasNextTournamentGame(room)) {
     completeTournament(room)
+    room.overtimePending = false
     broadcastRoom(room, 'game_state')
     return false
   }
+  room.overtimePending = shouldQueueOvertimeGame(room)
   room.phase = 'intermission'
   room.intermission = {
     endsAt: Date.now() + INTERMISSION_DURATION_MS,
     acknowledgedPlayerIds: new Set(roomPlayers(room).filter((player) => player.bot).map((player) => player.id)),
+    overtime: room.overtimePending,
   }
   broadcastRoom(room, 'game_state')
   scheduleGame(room, INTERMISSION_DURATION_MS, () => advanceGameQueue(room))
@@ -1778,6 +1818,9 @@ function createRoom(clientId) {
     game: null,
     gameQueue: [],
     gameIndex: 0,
+    scheduledGameCount: 0,
+    overtimeGameCount: 0,
+    overtimePending: false,
     instructions: null,
     intermission: null,
     instructionTimer: null,
@@ -2031,6 +2074,9 @@ wss.on('connection', (socket) => {
         : randomGameQueue(room.mode, room.maxGames)
       if (!room.gameQueue.length) room.gameQueue = randomGameQueue(room.mode, room.maxGames)
       room.gameIndex = 0
+      room.scheduledGameCount = room.gameQueue.length
+      room.overtimeGameCount = 0
+      room.overtimePending = false
       createTournament(room)
       if (!beginInstructions(room)) return reject(socket, 'Could not load instructions for the selected game.')
       return

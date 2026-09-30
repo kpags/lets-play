@@ -87,6 +87,9 @@ const instructionsClosedByMe = computed(() =>
   gameInstructions.value?.acknowledgedPlayerIds?.includes(clientId) ?? false,
 )
 const gameIntermission = computed(() => onlineRoom.value?.phase === 'intermission' ? onlineRoom.value.intermission : null)
+const overtimeState = computed(() => onlineRoom.value?.overtime || { active: false, pending: false, count: 0 })
+const isOvertimeGame = computed(() => Boolean(overtimeState.value.active))
+const overtimeLabel = computed(() => `Overtime ${overtimeState.value.count}`)
 const intermissionCountdown = computed(() => {
   if (!gameIntermission.value?.endsAt) return 0
   const serverNow = reactionClockNow.value + reactionServerClockOffset.value
@@ -645,6 +648,7 @@ const renderGameToText = () =>
         intermission: {
           secondsRemaining: intermissionCountdown.value,
           continuedByMe: intermissionSkippedByMe.value,
+          overtime: Boolean(gameIntermission.value.overtime),
           standings: onlineRoom.value?.tournament?.standings,
         },
       }),
@@ -841,6 +845,7 @@ onBeforeUnmount(() => {
         <h1 id="reaction-title">Reaction Time</h1>
       </div>
       <p class="reaction-page__round">Round {{ reactionGame?.round }} / {{ reactionGame?.maxRounds }}</p>
+      <p v-if="isOvertimeGame" class="reaction-page__overtime">{{ overtimeLabel }}</p>
 
       <section v-if="showReactionMenu" id="reaction-game-menu" class="reaction-menu" aria-label="Game menu">
         <button type="button" @click="resumeReaction">Resume</button>
@@ -912,6 +917,7 @@ onBeforeUnmount(() => {
         <h1 id="guess-time-title">Guess The Time</h1>
       </div>
       <p class="reaction-page__round">Round {{ guessTimeGame?.round }} / {{ guessTimeGame?.maxRounds }}</p>
+      <p v-if="isOvertimeGame" class="reaction-page__overtime">{{ overtimeLabel }}</p>
 
       <section v-if="showReactionMenu" id="guess-time-game-menu" class="reaction-menu" aria-label="Game menu">
         <button type="button" @click="resumeReaction">Resume</button>
@@ -989,6 +995,7 @@ onBeforeUnmount(() => {
         <h1 id="word-memory-title">Word Memory Challenge</h1>
       </div>
       <p class="reaction-page__round">Round {{ wordMemoryGame?.round }} / {{ wordMemoryGame?.maxRounds }}</p>
+      <p v-if="isOvertimeGame" class="reaction-page__overtime">{{ overtimeLabel }}</p>
 
       <section v-if="showReactionMenu" id="word-memory-game-menu" class="reaction-menu" aria-label="Game menu">
         <button type="button" @click="resumeReaction">Resume</button>
@@ -1083,6 +1090,7 @@ onBeforeUnmount(() => {
         <h1 id="avoid-similar-title">Avoid Similar Answer</h1>
       </div>
       <p class="reaction-page__round">Round {{ avoidSimilarGame?.round }} / {{ avoidSimilarGame?.maxRounds }}</p>
+      <p v-if="isOvertimeGame" class="reaction-page__overtime">{{ overtimeLabel }}</p>
 
       <section v-if="showReactionMenu" id="avoid-similar-game-menu" class="reaction-menu" aria-label="Game menu">
         <button type="button" @click="resumeReaction">Resume</button>
@@ -1213,6 +1221,7 @@ onBeforeUnmount(() => {
         <h1 id="impostor-color-title">Impostor Color</h1>
       </div>
       <p class="reaction-page__round">{{ impostorColorGame?.redBottlesPicked ?? 0 }} / {{ impostorColorGame?.totalRedBottles ?? 2 }} red bottles</p>
+      <p v-if="isOvertimeGame" class="reaction-page__overtime">{{ overtimeLabel }}</p>
 
       <section v-if="showReactionMenu" id="impostor-color-game-menu" class="reaction-menu" aria-label="Game menu">
         <button type="button" @click="resumeReaction">Resume</button>
@@ -1477,7 +1486,7 @@ onBeforeUnmount(() => {
       aria-labelledby="instructions-dialog-title"
       aria-describedby="instructions-dialog-summary"
     >
-      <p class="instructions-dialog__eyebrow">Get ready to play</p>
+      <p class="instructions-dialog__eyebrow">{{ isOvertimeGame ? overtimeLabel : 'Get ready to play' }}</p>
       <h2 id="instructions-dialog-title">{{ gameInstructions.game.name }}</h2>
       <ul id="instructions-dialog-summary" class="instructions-dialog__list">
         <li><strong>Description:</strong> {{ gameInstructions.game.description }}</li>
@@ -1500,8 +1509,8 @@ onBeforeUnmount(() => {
 
   <div v-if="gameIntermission" class="instructions-dialog__overlay">
     <section class="instructions-dialog intermission-dialog" role="dialog" aria-modal="true" aria-labelledby="intermission-dialog-title">
-      <p class="instructions-dialog__eyebrow">Game complete</p>
-      <h2 id="intermission-dialog-title">Leaderboard</h2>
+      <p class="instructions-dialog__eyebrow">{{ gameIntermission?.overtime ? 'Overtime next' : 'Game complete' }}</p>
+      <h2 id="intermission-dialog-title">{{ gameIntermission?.overtime ? 'Overtime Leaderboard' : 'Leaderboard' }}</h2>
       <ol class="intermission-dialog__standings">
         <li
           v-for="(player, index) in onlineRoom?.tournament?.standings || []"
@@ -1513,7 +1522,7 @@ onBeforeUnmount(() => {
         </li>
       </ol>
       <p class="instructions-dialog__countdown" aria-live="polite">
-        Next game starts in {{ intermissionCountdown }} second{{ intermissionCountdown === 1 ? '' : 's' }}.
+        {{ gameIntermission?.overtime ? 'Overtime starts' : 'Next game starts' }} in {{ intermissionCountdown }} second{{ intermissionCountdown === 1 ? '' : 's' }}.
       </p>
       <button class="room-action instructions-dialog__close" type="button" :disabled="intermissionSkippedByMe" @click="skipIntermission">
         {{ intermissionSkippedByMe ? 'Waiting for playersâ€¦' : 'Go to next game' }}
