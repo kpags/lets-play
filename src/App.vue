@@ -14,6 +14,9 @@ const reactionGame = ref(null)
 const reactionClickSubmitted = ref(false)
 const fullWaterPourHeld = ref(false)
 const fullWaterBottleReturning = ref(false)
+const fullWaterContainerRef = ref(null)
+const fullWaterBottleCapRef = ref(null)
+const fullWaterPourArc = ref(null)
 const guessInput = ref('')
 const wordMemoryInput = ref('')
 const avoidSimilarInput = ref('')
@@ -50,6 +53,7 @@ let shuttingDown = false
 let reactionClockTimer = null
 let fullWaterBottleReturnTimer = null
 const tournamentFinishTimers = new Map()
+const activeTournamentFinishSounds = new Set()
 const MUSIC_TRACKS = {
   menu: ['/musics/menu/one.mp3', '/musics/menu/two.mp3', '/musics/menu/three.mp3', '/musics/menu/four.mp3'],
   game: ['/musics/in_game/one.mp3', '/musics/in_game/two.mp3', '/musics/in_game/three.mp3', '/musics/in_game/four.mp3'],
@@ -76,9 +80,15 @@ const SOUND_PATHS = {
     bottle_shake_two: '/sounds/in_game/impostor_color/bottle_shake_two.mp3',
   },
 }
+const QUIET_SFX_PATHS = new Set([
+  SOUND_PATHS.playerFinished,
+  SOUND_PATHS.playerEliminated,
+  SOUND_PATHS.preparationCountdown,
+])
 const musicQueues = { menu: [], game: [] }
 let activeMusic = null
 let activeMusicKind = ''
+let rankingPodiumMusicPaused = false
 let audioUnlocked = false
 let queuedSfx = Promise.resolve()
 let lastPreparationSoundKey = ''
@@ -276,6 +286,10 @@ function attemptPlay(audio) {
 function syncMusic() {
   if (!audioUnlocked) return
   const kind = desiredMusicKind()
+  if (kind === 'game' && rankingPodiumMusicPaused) {
+    if (activeMusicKind === 'game') activeMusic?.pause()
+    return
+  }
   if (activeMusic && activeMusicKind === kind) {
     updateMusicVolume()
     if (activeMusic.paused) attemptPlay(activeMusic)
@@ -305,10 +319,11 @@ function unlockAudio() {
 }
 
 function playSfx(path) {
-  if (!audioUnlocked || sfxVolume.value <= 0) return
+  if (!audioUnlocked || sfxVolume.value <= 0) return null
   const sound = new Audio(path)
-  sound.volume = Math.max(0, Math.min(100, Number(sfxVolume.value) || 0)) / 100
+  sound.volume = sfxPlaybackVolume(path)
   attemptPlay(sound)
+  return sound
 }
 
 function queueSfx(path) {
@@ -318,7 +333,7 @@ function queueSfx(path) {
       return
     }
     const sound = new Audio(path)
-    sound.volume = Math.max(0, Math.min(100, Number(sfxVolume.value) || 0)) / 100
+    sound.volume = sfxPlaybackVolume(path)
     const done = () => {
       sound.removeEventListener('ended', done)
       sound.removeEventListener('error', done)
@@ -361,15 +376,34 @@ function playNewSetItems(previous = [], next = [], path, queued = false) {
   next.filter((id) => !previousIds.has(id)).forEach(() => (queued ? queueSfx(path) : playSfx(path)))
 }
 
+function playOneForNewSetItems(previous = [], next = [], path) {
+  const previousIds = new Set(previous)
+  if (next.some((id) => !previousIds.has(id))) playSfx(path)
+}
+
+function sfxPlaybackVolume(path) {
+  const requested = Math.max(0, Math.min(100, Number(sfxVolume.value) || 0)) / 100
+  return QUIET_SFX_PATHS.has(path) ? Math.min(requested, 0.25) : requested
+}
+
 function tournamentFinishSoundDelay(soundId) {
   if (soundId === 'elimination_finish_with_winner') return 1_500
-  if (soundId === 'ranking_podium_finish') return 4_500
   return 0
 }
 
 function clearTournamentFinishSounds() {
   tournamentFinishTimers.forEach((timer) => window.clearTimeout(timer))
   tournamentFinishTimers.clear()
+  activeTournamentFinishSounds.forEach((sound) => {
+    sound.pause()
+    sound.currentTime = 0
+  })
+  activeTournamentFinishSounds.clear()
+}
+
+function pauseRankingPodiumMusic() {
+  rankingPodiumMusicPaused = true
+  if (activeMusicKind === 'game') activeMusic?.pause()
 }
 
 function scheduleTournamentFinishSound(room) {
@@ -387,38 +421,54 @@ function scheduleTournamentFinishSound(room) {
       onlineRoom.value?.code === room.code
       && activeTournament?.completedAt === tournament.completedAt
       && activeTournament?.finishSound === tournament.finishSound
-    ) playSfx(path)
+    ) {
+      if (tournament.finishSound === 'ranking_podium_finish') pauseRankingPodiumMusic()
+      const sound = playSfx(path)
+      if (sound) {
+        activeTournamentFinishSounds.add(sound)
+        const removeSound = () => activeTournamentFinishSounds.delete(sound)
+        sound.addEventListener('ended', removeSound, { once: true })
+        sound.addEventListener('error', removeSound, { once: true })
+      }
+    }
   }, delay)
   tournamentFinishTimers.set(key, timer)
 }
 
 function syncGameSounds(previousGame, nextGame) {
   if (!previousGame || !nextGame || previousGame.id !== nextGame.id) return
-  playNewSetItems(previousGame.eliminatedIds, nextGame.eliminatedIds, SOUND_PATHS.playerEliminated, true)
+  playNewSetItems(
+    previousGame.eliminatedIds,
+    nextGame.eliminatedIds,
+    SOUND_PATHS.playerEliminated,
+    nextGame.id !== 'impostor_color',
+  )
   if (nextGame.id === 'guess_the_time') {
     if (previousGame.phase !== 'running' && nextGame.phase === 'running') playSfx(SOUND_PATHS.stopwatchStarts)
     if (previousGame.phase === 'running' && nextGame.phase !== 'running') playSfx(SOUND_PATHS.stopwatchStops)
-    playNewSetItems(previousGame.guessedPlayerIds, nextGame.guessedPlayerIds, SOUND_PATHS.playerFinished, true)
+    playOneForNewSetItems(previousGame.guessedPlayerIds, nextGame.guessedPlayerIds, SOUND_PATHS.playerFinished)
   }
   if (nextGame.id === 'word_memory_challenge' || nextGame.id === 'avoid_similar_answer') {
-    playNewSetItems(previousGame.answeredPlayerIds, nextGame.answeredPlayerIds, SOUND_PATHS.playerFinished, true)
+    playOneForNewSetItems(previousGame.answeredPlayerIds, nextGame.answeredPlayerIds, SOUND_PATHS.playerFinished)
   }
   if (nextGame.id === 'type_it') {
     const previousFinished = previousGame.players?.filter((player) => player.finished).map((player) => player.playerId) || []
     const nextFinished = nextGame.players?.filter((player) => player.finished).map((player) => player.playerId) || []
-    playNewSetItems(previousFinished, nextFinished, SOUND_PATHS.playerFinished, true)
+    playOneForNewSetItems(previousFinished, nextFinished, SOUND_PATHS.playerFinished)
   }
-  if (nextGame.id === 'full_water' && nextGame.hasPoured && (!previousGame.hasPoured || previousGame.currentPlayerId !== nextGame.currentPlayerId)) {
-    queueSfx(SOUND_PATHS.playerFinished)
+  if (nextGame.id === 'full_water' && previousGame.phase !== 'settling' && nextGame.phase === 'settling') {
+    playSfx(SOUND_PATHS.playerFinished)
   }
   if (nextGame.id === 'impostor_color') {
     const hasNewShake = nextGame.phase === 'shaking'
       && (previousGame.phase !== 'shaking' || previousGame.shakeSequence !== nextGame.shakeSequence)
     const shakePath = SOUND_PATHS.impostorBottleShake[nextGame.shakeSound]
     if (hasNewShake && shakePath) playSfx(shakePath)
-    const previousRevealed = previousGame.bottles?.filter((bottle) => bottle.state === 'revealed').map((bottle) => bottle.index) || []
-    const nextRevealed = nextGame.bottles?.filter((bottle) => bottle.state === 'revealed').map((bottle) => bottle.index) || []
-    playNewSetItems(previousRevealed, nextRevealed, SOUND_PATHS.playerFinished, true)
+    const previousRevealed = new Set(previousGame.bottles?.filter((bottle) => bottle.state === 'revealed').map((bottle) => bottle.index) || [])
+    const newlyRevealedGreenBottle = nextGame.bottles?.some((bottle) =>
+      bottle.state === 'revealed' && bottle.color === 'green' && !previousRevealed.has(bottle.index),
+    )
+    if (newlyRevealedGreenBottle) playSfx(SOUND_PATHS.playerFinished)
   }
 }
 
@@ -836,6 +886,7 @@ function applyRoomSnapshot(room, serverNow) {
 function resetOnlineRoom(reason = '') {
   window.clearTimeout(fullWaterBottleReturnTimer)
   clearTournamentFinishSounds()
+  rankingPodiumMusicPaused = false
   fullWaterBottleReturning.value = false
   onlineRoom.value = null
   reactionGame.value = null
@@ -1047,6 +1098,38 @@ const recordReaction = () => {
   sendRoom({ type: 'reaction_click' })
 }
 
+function updateFullWaterPourArc() {
+  if (fullWaterGame.value?.phase !== 'pouring') {
+    fullWaterPourArc.value = null
+    return
+  }
+  const container = fullWaterContainerRef.value
+  const cap = fullWaterBottleCapRef.value
+  const glass = container?.querySelector('.full-water-container__glass')
+  if (!container || !cap || !glass) return
+
+  const containerRect = container.getBoundingClientRect()
+  const capRect = cap.getBoundingClientRect()
+  const glassRect = glass.getBoundingClientRect()
+  if (!containerRect.width || !containerRect.height) return
+
+  const startX = capRect.left + capRect.width / 2 - containerRect.left
+  const startY = capRect.top + capRect.height * 0.72 - containerRect.top
+  const endX = glassRect.left + glassRect.width / 2 - containerRect.left
+  const endY = glassRect.top + glassRect.height * 0.14 - containerRect.top
+  const deltaX = endX - startX
+  const deltaY = endY - startY
+  const controlOneX = startX + deltaX * 0.62
+  const controlOneY = startY + deltaY * 0.16
+  const controlTwoX = endX - deltaX * 0.18
+  const controlTwoY = endY - deltaY * 0.38
+
+  fullWaterPourArc.value = {
+    viewBox: `0 0 ${containerRect.width} ${containerRect.height}`,
+    path: `M ${startX} ${startY} C ${controlOneX} ${controlOneY}, ${controlTwoX} ${controlTwoY}, ${endX} ${endY}`,
+  }
+}
+
 function normalizeGuessInput(value) {
   const [integer = '', ...decimalParts] = String(value || '').replace(/[^\d.]/g, '').split('.')
   const decimal = decimalParts.join('').slice(0, 2)
@@ -1089,6 +1172,10 @@ watch(typeItCanType, (canType, wasTyping) => {
     if (typeItCanType.value) typeItInputRef.value?.focus({ preventScroll: true })
   })
 })
+
+watch([() => fullWaterGame.value?.phase, currentView], () => {
+  nextTick(updateFullWaterPourArc)
+}, { immediate: true })
 
 watch([currentView, () => onlineRoom.value?.phase, musicVolume], syncMusic, { immediate: true })
 watch([reactionClockNow, () => reactionGame.value?.phaseEndsAt], syncPreparationCountdownSound)
@@ -1137,6 +1224,7 @@ function quitActiveGame() {
 }
 
 function exitRoom() {
+  clearTournamentFinishSounds()
   unlockAudio()
   playSfx(SOUND_PATHS.playerLeft)
   sendRoom({ type: 'leave_room' })
@@ -1297,6 +1385,7 @@ onMounted(() => {
   window.advanceTime = (ms = 0) => { reactionClockNow.value += Number(ms) || 0 }
   window.addEventListener('pointerup', stopFullWaterPour)
   window.addEventListener('blur', stopFullWaterPour)
+  window.addEventListener('resize', updateFullWaterPourArc)
   window.addEventListener('pointerdown', unlockAudio)
   window.addEventListener('keydown', unlockAudio)
   window.addEventListener('pointerover', handleMenuButtonHover)
@@ -1313,6 +1402,7 @@ onBeforeUnmount(() => {
   window.clearInterval(reactionClockTimer)
   window.removeEventListener('pointerup', stopFullWaterPour)
   window.removeEventListener('blur', stopFullWaterPour)
+  window.removeEventListener('resize', updateFullWaterPourArc)
   window.removeEventListener('pointerdown', unlockAudio)
   window.removeEventListener('keydown', unlockAudio)
   window.removeEventListener('pointerover', handleMenuButtonHover)
@@ -1925,6 +2015,7 @@ onBeforeUnmount(() => {
       <p v-if="fullWaterStatus" class="full-water-field__status">{{ fullWaterStatus }}</p>
       <div class="full-water-board">
         <div
+          ref="fullWaterContainerRef"
           class="full-water-container"
           :class="{
             'full-water-container--near-overflow': fullWaterIsNearOverflow,
@@ -1934,10 +2025,26 @@ onBeforeUnmount(() => {
           aria-label="Water container"
         >
           <span class="full-water-container__rim"></span>
-          <span v-if="fullWaterIsNearOverflow" class="full-water-container__lip-water" aria-hidden="true"><i></i><b></b></span>
+          <span v-if="fullWaterIsNearOverflow || fullWaterGame?.phase === 'overflowing'" class="full-water-container__lip-water" aria-hidden="true"><i></i><b></b></span>
           <span v-if="fullWaterGame?.phase === 'overflowing'" class="full-water-container__overflow-surface" aria-hidden="true"></span>
+          <svg
+            v-if="fullWaterGame?.phase === 'pouring' && fullWaterPourArc"
+            class="full-water-pour-arc"
+            :viewBox="fullWaterPourArc.viewBox"
+            aria-hidden="true"
+          >
+            <defs>
+              <linearGradient id="full-water-pour-gradient" x1="0" y1="0" x2="1" y2="1">
+                <stop offset="0%" stop-color="#c9f9ff" stop-opacity="0.78" />
+                <stop offset="48%" stop-color="#4fc8e9" />
+                <stop offset="100%" stop-color="#1e97c9" stop-opacity="0.82" />
+              </linearGradient>
+            </defs>
+            <path class="full-water-pour-arc__glow" :d="fullWaterPourArc.path" pathLength="1" />
+            <path class="full-water-pour-arc__body" :d="fullWaterPourArc.path" pathLength="1" />
+            <path class="full-water-pour-arc__highlight" :d="fullWaterPourArc.path" pathLength="1" />
+          </svg>
           <span class="full-water-container__glass">
-            <span v-if="fullWaterGame?.phase === 'pouring'" class="full-water-container__pour-stream" aria-hidden="true"></span>
             <span class="full-water-container__limit-ring" aria-hidden="true"></span>
             <span class="full-water-container__liquid" :style="fullWaterFillStyle"><i></i></span>
           </span>
@@ -1946,7 +2053,7 @@ onBeforeUnmount(() => {
           <span class="full-water-container__spill full-water-container__spill--right"></span>
           <span class="full-water-container__puddle"></span>
           <div v-if="fullWaterBottleVisible" class="full-water-bottle" :class="{ 'full-water-bottle--pouring': fullWaterGame?.phase === 'pouring', 'full-water-bottle--returning': fullWaterBottleReturning }" aria-hidden="true">
-            <span class="full-water-bottle__cap"><i v-if="fullWaterGame?.phase === 'pouring'" class="full-water-bottle__stream"></i></span>
+            <span ref="fullWaterBottleCapRef" class="full-water-bottle__cap"></span>
             <span class="full-water-bottle__glass"><span class="full-water-bottle__liquid"></span></span>
           </div>
         </div>

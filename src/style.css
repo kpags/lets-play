@@ -1972,11 +1972,6 @@ button {
 
 .full-water-container {
   --full-water-bottle-angle: 118deg;
-  --full-water-stream-angle: 16deg;
-  --full-water-stream-entry: 72%;
-  --full-water-stream-width: 0.52rem;
-  --full-water-stream-fill: linear-gradient(90deg, rgb(203 248 255 / 0.55), #52c8ea 48%, rgb(109 215 242 / 0.52));
-  --full-water-stream-glow: 0 0 0.55rem rgb(61 199 233 / 0.36);
   --full-water-bottle-return-x: 0px;
   --full-water-bottle-return-y: 28rem;
   position: relative;
@@ -2063,6 +2058,26 @@ button {
   animation: full-water-near-overflow-drops 620ms ease-in-out infinite alternate;
 }
 
+.full-water-container--overflowing .full-water-container__lip-water {
+  z-index: 6;
+  width: 78%;
+  left: 11%;
+  height: 4.8%;
+  animation: full-water-overflow-lip 340ms ease-in-out infinite alternate;
+}
+
+.full-water-container--overflowing .full-water-container__lip-water i {
+  animation: full-water-overflow-bubbles 360ms ease-in-out infinite alternate;
+}
+
+.full-water-container--overflowing .full-water-container__lip-water b {
+  animation: full-water-overflow-drops 320ms ease-in-out infinite alternate;
+}
+
+.full-water-container--overflowing .full-water-container__liquid i {
+  animation-duration: 420ms;
+}
+
 .full-water-container__overflow-surface {
   position: absolute;
   z-index: 5;
@@ -2129,19 +2144,41 @@ button {
   transition: height 140ms linear;
 }
 
-.full-water-container__pour-stream {
+.full-water-pour-arc {
   position: absolute;
-  z-index: 1;
-  top: -0.7rem;
-  left: var(--full-water-stream-entry);
-  width: var(--full-water-stream-width);
-  height: calc(100% + 1.5rem);
-  border-radius: 50%;
-  background: var(--full-water-stream-fill);
-  box-shadow: var(--full-water-stream-glow);
-  transform: rotate(var(--full-water-stream-angle));
-  transform-origin: top;
-  animation: full-water-container-stream-reveal 220ms ease-out 420ms both;
+  z-index: 0;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  overflow: visible;
+  pointer-events: none;
+}
+
+.full-water-pour-arc path {
+  fill: none;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+
+.full-water-pour-arc__glow {
+  stroke: rgb(66 202 233 / 0.3);
+  stroke-width: clamp(0.75rem, 2vmin, 1.05rem);
+  filter: blur(0.28rem);
+  animation: full-water-pour-arc-reveal 260ms ease-out both, full-water-pour-arc-pulse 720ms ease-in-out 260ms infinite alternate;
+}
+
+.full-water-pour-arc__body {
+  stroke: url(#full-water-pour-gradient);
+  stroke-width: clamp(0.38rem, 1vmin, 0.58rem);
+  animation: full-water-pour-arc-reveal 220ms ease-out both;
+}
+
+.full-water-pour-arc__highlight {
+  stroke: rgb(228 253 255 / 0.78);
+  stroke-width: clamp(0.08rem, 0.25vmin, 0.16rem);
+  stroke-dasharray: 0.08 0.13;
+  opacity: 0.8;
+  animation: full-water-pour-arc-highlight-reveal 180ms ease-out both, full-water-pour-arc-flow 620ms linear 180ms infinite reverse;
 }
 
 .full-water-container__liquid i {
@@ -2229,34 +2266,6 @@ button {
 .full-water-bottle__liquid {
   top: 0.1rem;
   height: auto;
-}
-
-.full-water-bottle__stream {
-  position: absolute;
-  top: -0.08rem;
-  left: 50%;
-  width: var(--full-water-stream-width);
-  height: clamp(4.2rem, 9.4vmin, 5.5rem);
-  border-radius: 50%;
-  background: var(--full-water-stream-fill);
-  box-shadow: var(--full-water-stream-glow);
-  transform: translateX(-50%) rotate(calc(var(--full-water-stream-angle) - var(--full-water-bottle-angle)));
-  transform-origin: top;
-  animation: full-water-stream-reveal 220ms ease-out 420ms both;
-}
-
-.full-water-bottle__stream::after {
-  display: none;
-  position: absolute;
-  right: -0.15rem;
-  bottom: -0.45rem;
-  width: 0.85rem;
-  height: 0.85rem;
-  border-radius: 50% 50% 55% 45%;
-  background: #64d5f1;
-  box-shadow: 0 0 0.4rem rgb(68 195 231 / 0.4);
-  content: "";
-  animation: full-water-droplet 700ms linear infinite;
 }
 
 .full-water-container__spill,
@@ -2459,24 +2468,24 @@ button {
   to { opacity: 0; transform: translate(calc(-50% + var(--full-water-bottle-return-x)), var(--full-water-bottle-return-y)) rotate(var(--full-water-bottle-angle)) scale(0.32); }
 }
 
-@keyframes full-water-stream {
-  from { opacity: 0.58; transform: translateX(-50%) rotate(calc(var(--full-water-stream-angle) - var(--full-water-bottle-angle))) scaleY(0.86); }
-  to { opacity: 1; transform: translateX(-50%) rotate(calc(var(--full-water-stream-angle) - var(--full-water-bottle-angle))) scaleY(1.06); }
+@keyframes full-water-pour-arc-reveal {
+  from { opacity: 0; stroke-dasharray: 1; stroke-dashoffset: 1; }
+  to { opacity: 1; stroke-dasharray: 1; stroke-dashoffset: 0; }
 }
 
-@keyframes full-water-stream-reveal {
-  from { opacity: 0; transform: translateX(-50%) rotate(calc(var(--full-water-stream-angle) - var(--full-water-bottle-angle))) scaleY(0.04); }
-  to { opacity: 1; transform: translateX(-50%) rotate(calc(var(--full-water-stream-angle) - var(--full-water-bottle-angle))) scaleY(1); }
+@keyframes full-water-pour-arc-highlight-reveal {
+  from { opacity: 0; }
+  to { opacity: 0.8; }
 }
 
-@keyframes full-water-container-stream {
-  from { opacity: 0.58; transform: rotate(var(--full-water-stream-angle)) scaleY(0.96); }
-  to { opacity: 1; transform: rotate(var(--full-water-stream-angle)) scaleY(1.04); }
+@keyframes full-water-pour-arc-pulse {
+  from { opacity: 0.46; }
+  to { opacity: 0.76; }
 }
 
-@keyframes full-water-container-stream-reveal {
-  from { opacity: 0; transform: rotate(var(--full-water-stream-angle)) scaleY(0.04); }
-  to { opacity: 1; transform: rotate(var(--full-water-stream-angle)) scaleY(1); }
+@keyframes full-water-pour-arc-flow {
+  from { stroke-dashoffset: 0; }
+  to { stroke-dashoffset: -1; }
 }
 
 @keyframes full-water-lip-wave {
@@ -2494,14 +2503,24 @@ button {
   to { opacity: 1; transform: translateY(0.18rem) scaleY(1.08); }
 }
 
+@keyframes full-water-overflow-lip {
+  from { transform: translateX(-3%) translateY(-0.08rem) scaleY(0.95); }
+  to { transform: translateX(3%) translateY(0.12rem) scaleY(1.18); }
+}
+
+@keyframes full-water-overflow-bubbles {
+  from { opacity: 0.54; transform: translateY(0.12rem) scale(0.78); }
+  to { opacity: 1; transform: translateY(-0.34rem) scale(1.18); }
+}
+
+@keyframes full-water-overflow-drops {
+  from { opacity: 0.5; transform: translateY(-0.12rem) scaleY(0.7); }
+  to { opacity: 1; transform: translateY(0.42rem) scaleY(1.35); }
+}
+
 @keyframes full-water-overflow-surface {
   from { opacity: 0; transform: translateY(0.45rem) scaleX(0.46); }
   to { opacity: 1; transform: translateY(0) scaleX(1); }
-}
-
-@keyframes full-water-droplet {
-  from { opacity: 0.9; transform: translate(-0.12rem, -0.2rem) scale(0.62); }
-  to { opacity: 0.1; transform: translate(0.35rem, 0.5rem) scale(1); }
 }
 
 @keyframes full-water-spill {
@@ -3039,8 +3058,7 @@ button {
   .full-water-container__liquid i,
   .full-water-bottle__liquid,
   .full-water-player__bottle i,
-  .full-water-bottle__stream,
-  .full-water-container__pour-stream,
+  .full-water-pour-arc path,
   .full-water-container__lip-water,
   .full-water-container__lip-water i,
   .full-water-container__lip-water b,
@@ -3070,6 +3088,12 @@ button {
   .full-water-container--near-overflow-pouring .full-water-container__lip-water,
   .full-water-container--near-overflow-pouring .full-water-container__lip-water i,
   .full-water-container--near-overflow-pouring .full-water-container__lip-water b {
+    animation: none;
+  }
+
+  .full-water-container--overflowing .full-water-container__lip-water,
+  .full-water-container--overflowing .full-water-container__lip-water i,
+  .full-water-container--overflowing .full-water-container__lip-water b {
     animation: none;
   }
 
