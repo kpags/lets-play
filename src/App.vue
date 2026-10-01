@@ -12,6 +12,8 @@ const onlineError = ref('')
 const onlineRoom = ref(null)
 const reactionGame = ref(null)
 const reactionClickSubmitted = ref(false)
+const fullWaterPourHeld = ref(false)
+const fullWaterBottleReturning = ref(false)
 const guessInput = ref('')
 const wordMemoryInput = ref('')
 const avoidSimilarInput = ref('')
@@ -42,6 +44,7 @@ let reconnectTimer = null
 let reconnectAttempts = 0
 let shuttingDown = false
 let reactionClockTimer = null
+let fullWaterBottleReturnTimer = null
 const menuItems = [
   { label: 'Play', action: () => createOnlineRoom() },
   { label: 'Invite Code', action: () => openInviteDialog() },
@@ -52,7 +55,7 @@ const gameCatalogs = {
   'Free For All': freeForAllCatalog,
   'For Fun': forFunCatalog,
 }
-const playableGameIds = new Set(['reaction_time', 'guess_the_time', 'impostor_color', 'word_memory_challenge', 'avoid_similar_answer'])
+const playableGameIds = new Set(['reaction_time', 'guess_the_time', 'impostor_color', 'word_memory_challenge', 'avoid_similar_answer', 'full_water'])
 
 const playerCount = computed(
   () => teamOne.value.filter(Boolean).length + teamTwo.value.filter(Boolean).length,
@@ -151,6 +154,71 @@ const guessTimeGame = computed(() => reactionGame.value?.id === 'guess_the_time'
 const wordMemoryGame = computed(() => reactionGame.value?.id === 'word_memory_challenge' ? reactionGame.value : null)
 const avoidSimilarGame = computed(() => reactionGame.value?.id === 'avoid_similar_answer' ? reactionGame.value : null)
 const impostorColorGame = computed(() => reactionGame.value?.id === 'impostor_color' ? reactionGame.value : null)
+const fullWaterGame = computed(() => reactionGame.value?.id === 'full_water' ? reactionGame.value : null)
+const fullWaterBottleVisible = computed(() => {
+  const phase = fullWaterGame.value?.phase
+  return fullWaterBottleReturning.value || ['pouring', 'ready_to_finish'].includes(phase)
+})
+const fullWaterCountdown = computed(() => {
+  if (!fullWaterGame.value?.phaseEndsAt) return null
+  const serverNow = reactionClockNow.value + reactionServerClockOffset.value
+  return Math.max(0, Math.ceil((fullWaterGame.value.phaseEndsAt - serverNow) / 1000))
+})
+const canStartFullWaterPour = computed(() =>
+  ['waiting_to_pour', 'ready_to_finish'].includes(fullWaterGame.value?.phase)
+  && fullWaterGame.value.currentPlayerId === clientId
+  && Number(fullWaterGame.value.turnPouredMl || 0) < 5
+  && !isTournamentSpectator.value
+  && !showReactionMenu.value,
+)
+const canStopFullWaterPour = computed(() =>
+  fullWaterGame.value?.phase === 'pouring'
+  && fullWaterGame.value.currentPlayerId === clientId
+  && !isTournamentSpectator.value,
+)
+const canFinishFullWaterTurn = computed(() =>
+  fullWaterGame.value?.phase === 'ready_to_finish'
+  && fullWaterGame.value.currentPlayerId === clientId
+  && Boolean(fullWaterGame.value.hasPoured)
+  && !isTournamentSpectator.value
+  && !showReactionMenu.value,
+)
+const canControlFullWaterPour = computed(() => canStartFullWaterPour.value || (canStopFullWaterPour.value && fullWaterPourHeld.value))
+const fullWaterDisplayedMl = computed(() => {
+  const game = fullWaterGame.value
+  if (!game) return 0
+  if (game.phase !== 'pouring' || !game.pourStartedAt) return Number(game.waterMl || 0)
+  const serverNow = reactionClockNow.value + reactionServerClockOffset.value
+  const remainingMl = Math.max(0, 5 - Number(game.turnPouredMl || 0))
+  const pouredMl = Math.min(remainingMl, Math.max(0, (serverNow - game.pourStartedAt) / 1_000))
+  return Number((Number(game.pourStartWaterMl || 0) + pouredMl).toFixed(2))
+})
+const fullWaterFillStyle = computed(() => {
+  const capacity = Number(fullWaterGame.value?.capacityMl || 1)
+  const percentage = Math.min(116, Math.max(0, fullWaterDisplayedMl.value / capacity * 100))
+  return { height: `${percentage}%` }
+})
+const fullWaterIsNearOverflow = computed(() => {
+  const game = fullWaterGame.value
+  const capacity = Number(game?.capacityMl || 0)
+  const water = fullWaterDisplayedMl.value
+  return capacity > 0
+    && game?.phase !== 'overflowing'
+    && water >= Math.max(0, capacity - 2)
+    && water <= capacity
+})
+const fullWaterStatus = computed(() => {
+  const game = fullWaterGame.value
+  if (!game) return ''
+  if (game.phase === 'round_intro') return `Round ${game.round} starts in ${fullWaterCountdown.value}.`
+  if (game.phase === 'waiting_to_pour' && game.currentPlayerId === clientId) return `Hold Pour to add water · ${fullWaterCountdown.value}s`
+  if (game.phase === 'ready_to_finish') return ''
+  if (game.phase === 'settling') return `${game.currentPlayerName || 'Player'}'s turn ends`
+  if (game.phase === 'overflowing') return 'Overflow!'
+  if (game.phase === 'afk_eliminated') return `${game.eliminatedPlayerName} was eliminated due to AFK.`
+  if (game.phase === 'complete') return game.winnerName ? `${game.winnerName} wins!` : 'Full Water complete!'
+  return ''
+})
 const impostorSelectedBottle = computed(() => {
   const index = impostorColorGame.value?.selectedBottleIndex
   return Number.isInteger(index) ? impostorColorGame.value?.bottles?.[index] : null
@@ -338,11 +406,43 @@ function socketUrl() {
   return `${protocol}//${location.hostname}:8787`
 }
 
+function prepareFullWaterBottleReturn(playerId) {
+  const container = document.querySelector('.full-water-container')
+  const activeBottle = container?.querySelector('.full-water-bottle')
+  const playerCard = [...document.querySelectorAll('[data-full-water-player-id]')]
+    .find((card) => card.dataset.fullWaterPlayerId === playerId)
+  const slotBottle = playerCard?.querySelector('.full-water-player__bottle')
+  if (!container || !activeBottle || !slotBottle) return
+
+  const bottleRect = activeBottle.getBoundingClientRect()
+  const slotRect = slotBottle.getBoundingClientRect()
+  const returnX = slotRect.left + slotRect.width / 2 - (bottleRect.left + bottleRect.width / 2)
+  const returnY = slotRect.top + slotRect.height / 2 - (bottleRect.top + bottleRect.height / 2)
+  container.style.setProperty('--full-water-bottle-return-x', `${returnX}px`)
+  container.style.setProperty('--full-water-bottle-return-y', `${returnY}px`)
+}
+
 function applyRoomSnapshot(room, serverNow) {
+  const previousGame = reactionGame.value
+  const nextGame = room.game
+  const fullWaterTurnEnded = previousGame?.id === 'full_water'
+    && ['pouring', 'ready_to_finish'].includes(previousGame.phase)
+    && nextGame?.id === 'full_water'
+    && ['settling', 'overflowing'].includes(nextGame.phase)
+  if (fullWaterTurnEnded) {
+    window.clearTimeout(fullWaterBottleReturnTimer)
+    prepareFullWaterBottleReturn(previousGame.currentPlayerId)
+    fullWaterBottleReturning.value = true
+    fullWaterBottleReturnTimer = window.setTimeout(() => { fullWaterBottleReturning.value = false }, 360)
+  } else if (nextGame?.id !== 'full_water' || ['waiting_to_pour', 'round_intro', 'complete'].includes(nextGame.phase)) {
+    window.clearTimeout(fullWaterBottleReturnTimer)
+    fullWaterBottleReturning.value = false
+  }
   onlineRoom.value = room
   reactionGame.value = room.game || null
   if (serverNow) reactionServerClockOffset.value = serverNow - Date.now()
   if (!room.game || room.game.phase !== 'target' || room.game.activePlayerId !== clientId) reactionClickSubmitted.value = false
+  if (room.game?.id !== 'full_water' || room.game.phase !== 'pouring' || room.game.currentPlayerId !== clientId) fullWaterPourHeld.value = false
   if (room.game?.id !== 'guess_the_time' || room.game.phase !== 'guessing') guessInput.value = ''
   if (room.game?.id !== 'word_memory_challenge' || room.game.phase !== 'answering') wordMemoryInput.value = ''
   if (room.game?.id !== 'avoid_similar_answer' || room.game.phase !== 'answering') avoidSimilarInput.value = ''
@@ -360,6 +460,8 @@ function applyRoomSnapshot(room, serverNow) {
 }
 
 function resetOnlineRoom(reason = '') {
+  window.clearTimeout(fullWaterBottleReturnTimer)
+  fullWaterBottleReturning.value = false
   onlineRoom.value = null
   reactionGame.value = null
   showReactionMenu.value = false
@@ -377,6 +479,7 @@ function handleRoomMessage(event) {
     if (message.room.phase === 'playing' && message.room.game?.id === 'word_memory_challenge') currentView.value = 'word-memory'
     if (message.room.phase === 'playing' && message.room.game?.id === 'avoid_similar_answer') currentView.value = 'avoid-similar'
     if (message.room.phase === 'playing' && message.room.game?.id === 'impostor_color') currentView.value = 'impostor-color'
+    if (message.room.phase === 'playing' && message.room.game?.id === 'full_water') currentView.value = 'full-water'
     onlineError.value = message.room.phase === 'playing' ? 'Game started — waiting for gameplay.' : ''
   } else if (message.type === 'room_closed') {
     resetOnlineRoom(message.reason)
@@ -542,6 +645,23 @@ const kickPlayer = (player) => sendRoom({ type: 'kick_player', playerId: player.
 const closeInstructions = () => sendRoom({ type: 'close_instructions' })
 const skipIntermission = () => sendRoom({ type: 'skip_intermission' })
 const pickImpostorBottle = (bottleIndex) => sendRoom({ type: 'impostor_color_pick', bottleIndex })
+function startFullWaterPour() {
+  if (!canStartFullWaterPour.value || fullWaterPourHeld.value) return
+  fullWaterPourHeld.value = true
+  sendRoom({ type: 'full_water_pour_start' })
+}
+
+function stopFullWaterPour() {
+  if (!fullWaterPourHeld.value) return
+  fullWaterPourHeld.value = false
+  sendRoom({ type: 'full_water_pour_stop' })
+}
+
+function finishFullWaterTurn() {
+  if (!canFinishFullWaterTurn.value) return
+  sendRoom({ type: 'full_water_finish_turn' })
+}
+
 const recordReaction = () => {
   if (!reactionTargetInteractive.value) return
   reactionClickSubmitted.value = true
@@ -726,12 +846,31 @@ const renderGameToText = () =>
         eliminatedIds: impostorColorGame.value.eliminatedIds,
       },
     }),
+    ...(currentView.value === 'full-water' && fullWaterGame.value && {
+      game: {
+        id: fullWaterGame.value.id,
+        round: fullWaterGame.value.round,
+        maxRounds: fullWaterGame.value.maxRounds,
+        phase: fullWaterGame.value.phase,
+        currentPlayerId: fullWaterGame.value.currentPlayerId,
+        waterMl: fullWaterDisplayedMl.value,
+        capacityMl: fullWaterGame.value.capacityMl,
+        turnPouredMl: fullWaterGame.value.turnPouredMl,
+        canFinish: canFinishFullWaterTurn.value,
+        secondsRemaining: fullWaterCountdown.value,
+        pouring: fullWaterPourHeld.value,
+        eliminatedPlayerId: fullWaterGame.value.eliminatedPlayerId,
+        players: fullWaterGame.value.players,
+      },
+    }),
   })
 
 onMounted(() => {
   window.render_game_to_text = renderGameToText
   reactionClockTimer = window.setInterval(() => { reactionClockNow.value = Date.now() }, 100)
   window.advanceTime = (ms = 0) => { reactionClockNow.value += Number(ms) || 0 }
+  window.addEventListener('pointerup', stopFullWaterPour)
+  window.addEventListener('blur', stopFullWaterPour)
   const invitedRoom = new URLSearchParams(location.search).get('room')
   if (invitedRoom) joinOnlineRoom(invitedRoom.toUpperCase())
 })
@@ -739,7 +878,10 @@ onMounted(() => {
 onBeforeUnmount(() => {
   shuttingDown = true
   window.clearTimeout(reconnectTimer)
+  window.clearTimeout(fullWaterBottleReturnTimer)
   window.clearInterval(reactionClockTimer)
+  window.removeEventListener('pointerup', stopFullWaterPour)
+  window.removeEventListener('blur', stopFullWaterPour)
   roomSocket?.close()
   delete window.render_game_to_text
   delete window.advanceTime
@@ -1201,6 +1343,107 @@ onBeforeUnmount(() => {
           <small v-if="isRankingFormat">{{ tournamentPoints(player.playerId) }} pts</small>
         </article>
       </TransitionGroup>
+    </section>
+  </main>
+
+  <main v-else-if="currentView === 'full-water' || gameInstructions?.game?.id === 'full_water'" class="reaction-page full-water-page" aria-labelledby="full-water-title">
+    <header class="reaction-page__header">
+      <button
+        class="reaction-menu-trigger"
+        type="button"
+        aria-label="Open game menu"
+        aria-controls="full-water-game-menu"
+        :aria-expanded="showReactionMenu"
+        @click="toggleReactionMenu"
+      >
+        <span aria-hidden="true">⚙</span>
+      </button>
+      <div>
+        <p>Let's Play!</p>
+        <h1 id="full-water-title">Full Water</h1>
+      </div>
+      <p class="reaction-page__round">Round {{ fullWaterGame?.round ?? 1 }} / {{ fullWaterGame?.maxRounds ?? 1 }}</p>
+      <p v-if="isOvertimeGame" class="reaction-page__overtime">{{ overtimeLabel }}</p>
+
+      <section v-if="showReactionMenu" id="full-water-game-menu" class="reaction-menu" aria-label="Game menu">
+        <button type="button" @click="resumeReaction">Resume</button>
+        <button type="button" @click="openReactionSettings">Settings</button>
+        <button class="reaction-menu__quit" type="button" @click="quitActiveGame">Quit</button>
+      </section>
+    </header>
+
+    <section class="full-water-field" :class="{ 'full-water-field--with-status': fullWaterStatus }" aria-live="polite">
+      <p v-if="fullWaterStatus" class="full-water-field__status">{{ fullWaterStatus }}</p>
+      <div class="full-water-board">
+        <div
+          class="full-water-container"
+          :class="{
+            'full-water-container--near-overflow': fullWaterIsNearOverflow,
+            'full-water-container--near-overflow-pouring': fullWaterIsNearOverflow && fullWaterGame?.phase === 'pouring',
+            'full-water-container--overflowing': fullWaterGame?.phase === 'overflowing',
+          }"
+          aria-label="Water container"
+        >
+          <span class="full-water-container__rim"></span>
+          <span v-if="fullWaterIsNearOverflow" class="full-water-container__lip-water" aria-hidden="true"><i></i><b></b></span>
+          <span v-if="fullWaterGame?.phase === 'overflowing'" class="full-water-container__overflow-surface" aria-hidden="true"></span>
+          <span class="full-water-container__glass">
+            <span v-if="fullWaterGame?.phase === 'pouring'" class="full-water-container__pour-stream" aria-hidden="true"></span>
+            <span class="full-water-container__limit-ring" aria-hidden="true"></span>
+            <span class="full-water-container__liquid" :style="fullWaterFillStyle"><i></i></span>
+          </span>
+          <span class="full-water-container__base"></span>
+          <span class="full-water-container__spill full-water-container__spill--left"></span>
+          <span class="full-water-container__spill full-water-container__spill--right"></span>
+          <span class="full-water-container__puddle"></span>
+          <div v-if="fullWaterBottleVisible" class="full-water-bottle" :class="{ 'full-water-bottle--pouring': fullWaterGame?.phase === 'pouring', 'full-water-bottle--returning': fullWaterBottleReturning }" aria-hidden="true">
+            <span class="full-water-bottle__cap"><i v-if="fullWaterGame?.phase === 'pouring'" class="full-water-bottle__stream"></i></span>
+            <span class="full-water-bottle__glass"><span class="full-water-bottle__liquid"></span></span>
+          </div>
+        </div>
+
+        <p v-if="fullWaterGame?.phase === 'warning'" class="full-water-board__warning">AFK warning</p>
+        <p v-if="fullWaterGame?.phase === 'overflowing'" class="full-water-board__overflow">Overflow!</p>
+
+        <div v-if="canControlFullWaterPour || canFinishFullWaterTurn" class="full-water-actions">
+          <button
+            v-if="canControlFullWaterPour"
+            class="full-water-pour"
+            :class="{ 'full-water-pour--active': fullWaterPourHeld }"
+            type="button"
+            :aria-label="fullWaterPourHeld ? 'Release to pause pouring' : 'Hold to pour water'"
+            @pointerdown.prevent="startFullWaterPour"
+            @pointerup="stopFullWaterPour"
+            @pointercancel="stopFullWaterPour"
+            @keydown.space.prevent="startFullWaterPour"
+            @keyup.space.prevent="stopFullWaterPour"
+            @keydown.enter.prevent="startFullWaterPour"
+            @keyup.enter.prevent="stopFullWaterPour"
+          >
+            {{ fullWaterPourHeld ? 'Release to Pause' : 'Hold to Pour' }}
+          </button>
+          <button v-if="canFinishFullWaterTurn" class="full-water-finish" type="button" @click="finishFullWaterTurn">Finish</button>
+        </div>
+      </div>
+
+      <section class="full-water-players" aria-label="Players">
+        <article
+          v-for="player in fullWaterGame?.players || []"
+          :key="player.playerId"
+          :data-full-water-player-id="player.playerId"
+          :class="{
+            'full-water-player--warning': player.warningCount > 0 && !player.eliminated,
+            'full-water-player--current': ['waiting_to_pour', 'pouring'].includes(fullWaterGame?.phase) && player.playerId === fullWaterGame?.currentPlayerId && !player.eliminated,
+            'full-water-player--afk-out': player.eliminatedByAfk,
+            'full-water-player--out': player.eliminated && !player.eliminatedByAfk,
+          }"
+        >
+          <span class="full-water-player__bottle" aria-hidden="true"><i></i></span>
+          <strong>{{ player.playerName }}</strong>
+          <span>{{ player.eliminated ? 'Out' : player.playerId === fullWaterGame?.currentPlayerId ? fullWaterGame?.phase === 'pouring' ? 'Pouring' : 'Pour' : 'Safe' }}</span>
+          <small v-if="isRankingFormat">{{ tournamentPoints(player.playerId) }} pts</small>
+        </article>
+      </section>
     </section>
   </main>
 

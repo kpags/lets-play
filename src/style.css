@@ -1938,6 +1938,587 @@ button {
   background: radial-gradient(circle at 50% 36%, #f2fff4 0, #fff 43%, #e8f7fc 100%);
 }
 
+.full-water-page {
+  background: radial-gradient(circle at 50% 34%, #f7ffff 0, #edfaff 46%, #d6eef4 100%);
+}
+
+.full-water-field {
+  display: grid;
+  grid-template-rows: minmax(0, 1fr) auto;
+  width: min(100%, 76rem);
+  min-height: 0;
+  margin: 0 auto;
+}
+
+.full-water-field--with-status {
+  grid-template-rows: auto minmax(0, 1fr) auto;
+}
+
+.full-water-field__status {
+  margin: clamp(0.55rem, 2vh, 1.1rem) 0 0;
+  color: #17364d;
+  font-size: clamp(0.95rem, 2.1vw, 1.2rem);
+  font-weight: 900;
+  text-align: center;
+}
+
+.full-water-board {
+  position: relative;
+  display: grid;
+  place-items: center;
+  min-height: clamp(22rem, 57vh, 35rem);
+  overflow: visible;
+}
+
+.full-water-container {
+  --full-water-bottle-angle: 118deg;
+  --full-water-stream-angle: 16deg;
+  --full-water-stream-entry: 72%;
+  --full-water-stream-width: 0.52rem;
+  --full-water-stream-fill: linear-gradient(90deg, rgb(203 248 255 / 0.55), #52c8ea 48%, rgb(109 215 242 / 0.52));
+  --full-water-stream-glow: 0 0 0.55rem rgb(61 199 233 / 0.36);
+  --full-water-bottle-return-x: 0px;
+  --full-water-bottle-return-y: 28rem;
+  position: relative;
+  z-index: 6;
+  width: clamp(10.5rem, 27vmin, 17rem);
+  aspect-ratio: 0.88;
+  margin-top: 1.35rem;
+}
+
+.full-water-container__rim {
+  position: absolute;
+  z-index: 3;
+  top: 1%;
+  left: 8%;
+  width: 84%;
+  height: 4%;
+  border: 3px solid #8292af;
+  border-radius: 0.25rem;
+  background: linear-gradient(90deg, #c5cbd9, #929bae 52%, #e5e9f0);
+}
+
+.full-water-container__lip-water {
+  position: absolute;
+  z-index: 4;
+  top: 2.3%;
+  left: 15%;
+  width: 70%;
+  height: 3.6%;
+  border-radius: 50% 50% 0.7rem 0.7rem;
+  background: linear-gradient(180deg, rgb(199 249 255 / 0.95), #5ccfea 62%, #2498c8);
+  box-shadow: 0 0.12rem 0.3rem rgb(39 166 207 / 0.36), inset 0 0.15rem 0.24rem rgb(255 255 255 / 0.6);
+  pointer-events: none;
+}
+
+.full-water-container__lip-water i,
+.full-water-container__lip-water b {
+  position: absolute;
+  display: block;
+  pointer-events: none;
+}
+
+.full-water-container__lip-water i {
+  top: -0.32rem;
+  left: 14%;
+  width: 0.22rem;
+  height: 0.22rem;
+  border-radius: 50%;
+  background: rgb(222 253 255 / 0.92);
+  box-shadow: 1.2rem 0.13rem 0 -0.02rem rgb(218 252 255 / 0.82), 2.65rem -0.05rem 0 -0.03rem rgb(220 252 255 / 0.76), 4rem 0.1rem 0 -0.03rem rgb(218 252 255 / 0.82);
+}
+
+.full-water-container__lip-water b {
+  top: 36%;
+  right: -0.1rem;
+  left: -0.1rem;
+  height: 0.48rem;
+  background: none;
+  opacity: 0.78;
+}
+
+.full-water-container__lip-water b::before,
+.full-water-container__lip-water b::after {
+  position: absolute;
+  top: 0;
+  width: 0.28rem;
+  height: 0.42rem;
+  border-radius: 45% 55% 60% 40%;
+  background: linear-gradient(#bdf5ff, #3fb7dd);
+  content: "";
+}
+
+.full-water-container__lip-water b::before { left: 0; }
+.full-water-container__lip-water b::after { right: 0; transform: scaleX(-1); }
+
+.full-water-container--near-overflow-pouring .full-water-container__lip-water {
+  animation: full-water-lip-wave 620ms ease-in-out infinite alternate;
+}
+
+.full-water-container--near-overflow-pouring .full-water-container__lip-water i {
+  animation: full-water-near-overflow-bubbles 620ms ease-in-out infinite alternate;
+}
+
+.full-water-container--near-overflow-pouring .full-water-container__lip-water b {
+  animation: full-water-near-overflow-drops 620ms ease-in-out infinite alternate;
+}
+
+.full-water-container__overflow-surface {
+  position: absolute;
+  z-index: 5;
+  top: -2.8%;
+  left: 5%;
+  width: 90%;
+  height: 10%;
+  border-radius: 50% 50% 0.85rem 0.85rem;
+  background: linear-gradient(180deg, #c9f9ff, #63d4ed 48%, #2597c8);
+  box-shadow: 0 0.16rem 0.5rem rgb(35 162 207 / 0.48), inset 0 0.2rem 0.32rem rgb(255 255 255 / 0.68);
+  animation: full-water-overflow-surface 300ms ease-out both;
+}
+
+.full-water-container__glass {
+  position: absolute;
+  z-index: 2;
+  inset: 5% 7% 4%;
+  display: block;
+  overflow: hidden;
+  border: 3px solid rgb(104 123 160 / 0.72);
+  border-radius: 0.4rem 0.4rem 1.35rem 1.35rem;
+  background: linear-gradient(112deg, rgb(255 255 255 / 0.52), rgb(223 235 255 / 0.2) 36%, rgb(255 255 255 / 0.32) 65%, rgb(150 183 220 / 0.17));
+  box-shadow: inset 0 0 0 2px rgb(255 255 255 / 0.58), 0 0.6rem 1rem rgb(46 87 126 / 0.2);
+}
+
+.full-water-container__glass::before {
+  position: absolute;
+  z-index: 3;
+  top: 9%;
+  left: 11%;
+  width: 14%;
+  height: 62%;
+  border-radius: 50%;
+  background: rgb(255 255 255 / 0.44);
+  content: "";
+}
+
+.full-water-container__limit-ring {
+  position: absolute;
+  z-index: 4;
+  top: 8%;
+  right: 6%;
+  left: 6%;
+  height: 0.3rem;
+  border-top: 2px solid rgb(219 253 255 / 0.92);
+  border-bottom: 1px solid rgb(63 188 220 / 0.7);
+  border-radius: 50%;
+  box-shadow: 0 0 0.35rem rgb(76 205 231 / 0.46), inset 0 0.08rem 0 rgb(255 255 255 / 0.66);
+  opacity: 0.9;
+  pointer-events: none;
+}
+
+.full-water-container__liquid {
+  position: absolute;
+  z-index: 2;
+  right: 0;
+  bottom: 0;
+  left: 0;
+  min-height: 0;
+  overflow: hidden;
+  border-radius: 42% 48% 0 0 / 1rem 1rem 0 0;
+  background: linear-gradient(#79d9f5, #289ed1 72%, #187eae);
+  box-shadow: inset 0 0.6rem 0.9rem rgb(255 255 255 / 0.28);
+  transition: height 140ms linear;
+}
+
+.full-water-container__pour-stream {
+  position: absolute;
+  z-index: 1;
+  top: -0.7rem;
+  left: var(--full-water-stream-entry);
+  width: var(--full-water-stream-width);
+  height: calc(100% + 1.5rem);
+  border-radius: 50%;
+  background: var(--full-water-stream-fill);
+  box-shadow: var(--full-water-stream-glow);
+  transform: rotate(var(--full-water-stream-angle));
+  transform-origin: top;
+  animation: full-water-container-stream-reveal 220ms ease-out 420ms both;
+}
+
+.full-water-container__liquid i {
+  position: absolute;
+  top: -0.55rem;
+  left: -12%;
+  width: 124%;
+  height: 1.1rem;
+  border-radius: 50%;
+  background: rgb(204 249 255 / 0.65);
+  animation: full-water-wave 1.25s ease-in-out infinite alternate;
+}
+
+.full-water-container--near-overflow-pouring .full-water-container__liquid i {
+  animation-duration: 580ms;
+}
+
+.full-water-container__base {
+  position: absolute;
+  right: 13%;
+  bottom: 0;
+  left: 13%;
+  height: 5%;
+  border-radius: 0 0 50% 50%;
+  background: rgb(109 132 170 / 0.32);
+}
+
+.full-water-bottle {
+  position: absolute;
+  z-index: 1;
+  top: -90%;
+  left: 37%;
+  display: grid;
+  justify-items: center;
+  width: clamp(4.5rem, 11vmin, 7rem);
+  pointer-events: none;
+  transform: translateX(-50%) rotate(var(--full-water-bottle-angle));
+  transform-origin: 50% 92%;
+  animation: full-water-bottle-arrive 460ms cubic-bezier(.2, .8, .2, 1) both;
+}
+
+.full-water-bottle--returning {
+  z-index: 8;
+  animation: full-water-bottle-return 340ms cubic-bezier(.4, 0, .8, .45) forwards;
+}
+
+.full-water-bottle__cap {
+  position: relative;
+  z-index: 1;
+  width: 45%;
+  height: 0.55rem;
+  border: 2px solid #6996ac;
+  border-radius: 0.32rem 0.32rem 0.12rem 0.12rem;
+  background: linear-gradient(90deg, #d7eff4, #72aac1 50%, #ebf8fa);
+}
+
+.full-water-bottle__glass,
+.full-water-player__bottle {
+  position: relative;
+  display: block;
+  overflow: hidden;
+  border: 2px solid rgb(78 147 175 / 0.72);
+  border-radius: 0.65rem 0.65rem 1.1rem 1.1rem;
+  background: linear-gradient(112deg, rgb(255 255 255 / 0.86), rgb(205 242 250 / 0.3) 48%, rgb(255 255 255 / 0.58));
+  box-shadow: inset 0 0 0 1px rgb(255 255 255 / 0.72), 0 0.28rem 0.5rem rgb(27 108 138 / 0.18);
+}
+
+.full-water-bottle__glass {
+  width: 67%;
+  aspect-ratio: 0.56;
+}
+
+.full-water-bottle__liquid,
+.full-water-player__bottle i {
+  position: absolute;
+  right: 0.1rem;
+  bottom: 0.1rem;
+  left: 0.1rem;
+  height: 67%;
+  border-radius: 48% 48% 0.85rem 0.85rem;
+  background: linear-gradient(#9ae8fb, #2caddb 72%);
+  animation: full-water-wave 800ms ease-in-out infinite alternate;
+}
+
+.full-water-bottle__liquid {
+  top: 0.1rem;
+  height: auto;
+}
+
+.full-water-bottle__stream {
+  position: absolute;
+  top: -0.08rem;
+  left: 50%;
+  width: var(--full-water-stream-width);
+  height: clamp(4.2rem, 9.4vmin, 5.5rem);
+  border-radius: 50%;
+  background: var(--full-water-stream-fill);
+  box-shadow: var(--full-water-stream-glow);
+  transform: translateX(-50%) rotate(calc(var(--full-water-stream-angle) - var(--full-water-bottle-angle)));
+  transform-origin: top;
+  animation: full-water-stream-reveal 220ms ease-out 420ms both;
+}
+
+.full-water-bottle__stream::after {
+  display: none;
+  position: absolute;
+  right: -0.15rem;
+  bottom: -0.45rem;
+  width: 0.85rem;
+  height: 0.85rem;
+  border-radius: 50% 50% 55% 45%;
+  background: #64d5f1;
+  box-shadow: 0 0 0.4rem rgb(68 195 231 / 0.4);
+  content: "";
+  animation: full-water-droplet 700ms linear infinite;
+}
+
+.full-water-container__spill,
+.full-water-container__puddle {
+  position: absolute;
+  z-index: 6;
+  display: none;
+  background: linear-gradient(#65d3ef, rgb(32 146 205 / 0.52));
+}
+
+.full-water-container--overflowing .full-water-container__spill,
+.full-water-container--overflowing .full-water-container__puddle {
+  display: block;
+}
+
+.full-water-container__spill {
+  top: 2%;
+  width: 0.68rem;
+  height: 83%;
+  border-radius: 50% 50% 0.9rem 0.9rem;
+  animation: full-water-spill 900ms ease-in both;
+}
+
+.full-water-container__spill--left { left: 7%; transform: rotate(9deg); }
+.full-water-container__spill--right { right: 7%; transform: rotate(-9deg); }
+
+.full-water-container__puddle {
+  right: -17%;
+  bottom: -3%;
+  left: -17%;
+  height: 8%;
+  border-radius: 50%;
+  opacity: 0.78;
+  animation: full-water-puddle 900ms ease-out both;
+}
+
+.full-water-actions {
+  position: absolute;
+  z-index: 8;
+  bottom: clamp(0.15rem, 2vh, 0.9rem);
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 0.55rem;
+  width: min(27rem, calc(100% - 1rem));
+}
+
+.full-water-pour,
+.full-water-finish {
+  min-width: 0;
+  min-height: 3rem;
+  border: 1px solid rgb(255 255 255 / 0.9);
+  border-radius: 999px;
+  padding: 0.65rem 1.6rem;
+  color: #113e57;
+  background: linear-gradient(135deg, rgb(230 252 255 / 0.83), rgb(117 214 240 / 0.7));
+  box-shadow: inset 0 0.18rem 0.28rem rgb(255 255 255 / 0.74), 0 0.55rem 1rem rgb(24 142 188 / 0.28);
+  font: inherit;
+  font-weight: 900;
+  cursor: pointer;
+  touch-action: none;
+  transition: transform 140ms ease, filter 140ms ease, box-shadow 140ms ease;
+}
+
+.full-water-pour:is(:hover, :focus-visible) {
+  filter: brightness(1.08);
+  transform: translateY(-0.12rem);
+}
+
+.full-water-pour--active {
+  color: #fff;
+  background: linear-gradient(135deg, #1595c2, #1874a9);
+  box-shadow: inset 0 0.16rem 0.25rem rgb(255 255 255 / 0.35), 0 0.22rem 0.55rem rgb(12 94 143 / 0.46);
+  transform: translateY(0.1rem) scale(0.975);
+}
+
+.full-water-finish {
+  color: #fff;
+  background: linear-gradient(135deg, #55c77a, #1f8b58);
+  box-shadow: inset 0 0.18rem 0.28rem rgb(255 255 255 / 0.42), 0 0.55rem 1rem rgb(31 124 78 / 0.28);
+}
+
+.full-water-finish:is(:hover, :focus-visible) {
+  filter: brightness(1.08);
+  transform: translateY(-0.12rem);
+}
+
+.full-water-board__warning,
+.full-water-board__overflow {
+  position: absolute;
+  z-index: 9;
+  top: 47%;
+  left: 50%;
+  width: min(90%, 34rem);
+  margin: 0;
+  color: #b4441b;
+  font-family: "Arial Rounded MT Bold", "Trebuchet MS", sans-serif;
+  font-size: clamp(2.1rem, 8vw, 4.5rem);
+  font-weight: 900;
+  text-align: center;
+  text-shadow: 0 0.12rem 0 #fff, 0 0.4rem 1rem rgb(0 0 0 / 0.17);
+  transform: translate(-50%, -50%);
+  animation: full-water-message 250ms ease-out both;
+}
+
+.full-water-board__overflow { color: #12698d; }
+
+.full-water-players {
+  display: grid;
+  grid-template-columns: repeat(5, minmax(0, 1fr));
+  gap: 0.6rem;
+  width: min(100%, 76rem);
+  margin: 0.3rem auto 0.6rem;
+}
+
+.full-water-players article {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  grid-template-areas: "bottle name state" "bottle points points";
+  align-items: center;
+  gap: 0.18rem 0.45rem;
+  min-width: 0;
+  border: 1px solid rgb(50 132 157 / 0.3);
+  border-radius: 0.75rem;
+  padding: 0.45rem 0.55rem;
+  color: #17364d;
+  background: rgb(255 255 255 / 0.72);
+  font-size: 0.82rem;
+}
+
+.full-water-player__bottle {
+  grid-area: bottle;
+  width: 1.25rem;
+  height: 2rem;
+}
+
+.full-water-players strong {
+  grid-area: name;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.full-water-players > article > span:not(.full-water-player__bottle) {
+  grid-area: state;
+  color: #368e5c;
+  font-weight: 900;
+  white-space: nowrap;
+}
+
+.full-water-players small {
+  grid-area: points;
+  color: #a56c18;
+  font-size: 0.68rem;
+  font-weight: 900;
+  white-space: nowrap;
+}
+
+.full-water-player--warning {
+  border-color: #d88a24 !important;
+  background: linear-gradient(145deg, #fff3a6, #f2b544) !important;
+}
+
+.full-water-player--warning > span:not(.full-water-player__bottle) { color: #7a4306 !important; }
+
+.full-water-player--current {
+  border-color: #b7dd32 !important;
+  background: linear-gradient(135deg, #f2ffb4 0%, #d9f77a 48%, #a9dc4c 100%) !important;
+  box-shadow: 0 0 0 0.18rem rgb(226 255 111 / 0.4), 0 0.45rem 1.1rem rgb(118 164 29 / 0.32), 0 0 1.05rem rgb(191 232 61 / 0.28);
+  animation: impostor-player-turn 1.25s ease-in-out infinite alternate;
+}
+
+.full-water-player--current > span:not(.full-water-player__bottle),
+.full-water-player--current small { color: #245d2b !important; }
+
+.full-water-player--out { opacity: 0.55; filter: grayscale(0.8); }
+
+.full-water-player--afk-out {
+  border-color: #b62d36 !important;
+  color: #fff !important;
+  background: linear-gradient(145deg, #ed6670, #b92632) !important;
+  opacity: 1;
+  filter: none;
+}
+
+.full-water-player--afk-out > span:not(.full-water-player__bottle) { color: #fff3f3 !important; }
+
+@keyframes full-water-wave {
+  from { transform: translateX(-4%) rotate(-1deg); }
+  to { transform: translateX(4%) rotate(1deg); }
+}
+
+@keyframes full-water-bottle-arrive {
+  from { opacity: 0; transform: translate(-50%, 12rem) rotate(12deg); }
+  to { opacity: 1; transform: translateX(-50%) rotate(var(--full-water-bottle-angle)); }
+}
+
+@keyframes full-water-bottle-return {
+  from { opacity: 1; transform: translateX(-50%) rotate(var(--full-water-bottle-angle)); }
+  to { opacity: 0; transform: translate(calc(-50% + var(--full-water-bottle-return-x)), var(--full-water-bottle-return-y)) rotate(var(--full-water-bottle-angle)) scale(0.32); }
+}
+
+@keyframes full-water-stream {
+  from { opacity: 0.58; transform: translateX(-50%) rotate(calc(var(--full-water-stream-angle) - var(--full-water-bottle-angle))) scaleY(0.86); }
+  to { opacity: 1; transform: translateX(-50%) rotate(calc(var(--full-water-stream-angle) - var(--full-water-bottle-angle))) scaleY(1.06); }
+}
+
+@keyframes full-water-stream-reveal {
+  from { opacity: 0; transform: translateX(-50%) rotate(calc(var(--full-water-stream-angle) - var(--full-water-bottle-angle))) scaleY(0.04); }
+  to { opacity: 1; transform: translateX(-50%) rotate(calc(var(--full-water-stream-angle) - var(--full-water-bottle-angle))) scaleY(1); }
+}
+
+@keyframes full-water-container-stream {
+  from { opacity: 0.58; transform: rotate(var(--full-water-stream-angle)) scaleY(0.96); }
+  to { opacity: 1; transform: rotate(var(--full-water-stream-angle)) scaleY(1.04); }
+}
+
+@keyframes full-water-container-stream-reveal {
+  from { opacity: 0; transform: rotate(var(--full-water-stream-angle)) scaleY(0.04); }
+  to { opacity: 1; transform: rotate(var(--full-water-stream-angle)) scaleY(1); }
+}
+
+@keyframes full-water-lip-wave {
+  from { transform: translateX(-2%) scaleY(0.92); }
+  to { transform: translateX(2%) scaleY(1.05); }
+}
+
+@keyframes full-water-near-overflow-bubbles {
+  from { opacity: 0.58; transform: translateY(0.15rem) scale(0.82); }
+  to { opacity: 1; transform: translateY(-0.18rem) scale(1.1); }
+}
+
+@keyframes full-water-near-overflow-drops {
+  from { opacity: 0.42; transform: translateY(-0.08rem) scaleY(0.75); }
+  to { opacity: 1; transform: translateY(0.18rem) scaleY(1.08); }
+}
+
+@keyframes full-water-overflow-surface {
+  from { opacity: 0; transform: translateY(0.45rem) scaleX(0.46); }
+  to { opacity: 1; transform: translateY(0) scaleX(1); }
+}
+
+@keyframes full-water-droplet {
+  from { opacity: 0.9; transform: translate(-0.12rem, -0.2rem) scale(0.62); }
+  to { opacity: 0.1; transform: translate(0.35rem, 0.5rem) scale(1); }
+}
+
+@keyframes full-water-spill {
+  from { clip-path: inset(0 0 100% 0); }
+  to { clip-path: inset(0); }
+}
+
+@keyframes full-water-puddle {
+  from { opacity: 0; transform: scaleX(0.2); }
+  to { opacity: 0.78; transform: scaleX(1); }
+}
+
+@keyframes full-water-message {
+  from { opacity: 0; transform: translate(-50%, -50%) scale(0.6); }
+  to { opacity: 1; transform: translate(-50%, -50%) scale(1); }
+}
+
 .impostor-color-field {
   display: grid;
   grid-template-rows: minmax(0, 1fr) auto;
@@ -2292,6 +2873,10 @@ button {
   .impostor-color-players {
     grid-template-columns: repeat(3, minmax(0, 1fr));
   }
+
+  .full-water-players {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
 }
 
 @media (max-width: 700px), (orientation: portrait) {
@@ -2358,6 +2943,20 @@ button {
   .impostor-color-players article {
     min-height: 3.75rem;
     align-content: center;
+    font-size: 0.76rem;
+  }
+
+  .full-water-board {
+    min-height: clamp(19rem, 52vh, 29rem);
+  }
+
+  .full-water-players {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 0.45rem;
+  }
+
+  .full-water-players article {
+    min-height: 3.75rem;
     font-size: 0.76rem;
   }
 
@@ -2435,7 +3034,20 @@ button {
   .guess-stopwatch--running,
   .word-memory-prompt__word,
   .word-memory-player__answer-bubble,
-  .avoid-similar-player__answer-bubble {
+  .avoid-similar-player__answer-bubble,
+  .full-water-bottle,
+  .full-water-container__liquid i,
+  .full-water-bottle__liquid,
+  .full-water-player__bottle i,
+  .full-water-bottle__stream,
+  .full-water-container__pour-stream,
+  .full-water-container__lip-water,
+  .full-water-container__lip-water i,
+  .full-water-container__lip-water b,
+  .full-water-container__spill,
+  .full-water-container__puddle,
+  .full-water-board__warning,
+  .full-water-board__overflow {
     animation: none;
     transition: none;
   }
@@ -2445,6 +3057,20 @@ button {
   .reaction-target:hover:not(:disabled),
   .reaction-target:active:not(:disabled) {
     transform: none;
+  }
+
+  .full-water-pour:hover,
+  .full-water-pour:active,
+  .full-water-pour--active,
+  .full-water-finish:hover,
+  .full-water-finish:active {
+    transform: none;
+  }
+
+  .full-water-container--near-overflow-pouring .full-water-container__lip-water,
+  .full-water-container--near-overflow-pouring .full-water-container__lip-water i,
+  .full-water-container--near-overflow-pouring .full-water-container__lip-water b {
+    animation: none;
   }
 
   .reaction-menu-trigger,

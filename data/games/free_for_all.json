@@ -83,14 +83,25 @@
     {
         "id": "full_water",
         "name": "Full Water",
-        "description": "Each player will take turns to fill a maximum of 15 mL of water into a 1 Liter of empty container.",
+        "description": "Each player will take turns to fill a maximum of 5 mL of water into an empty container.",
         "rounds": 1,
         "win_condition": "Successfully fill the container without exceeding the maximum limit.",
-        "lose_condition": "Exceeds the maximum 1 Liter of the container.",
+        "lose_condition": "Exceeds the maximum limit of the container.",
         "max_eliminations_per_round": 1,
         "points_allocation": {
             "winners": 5,
             "losers": 2
+        },
+        "max_container_limit_per_active_players": {
+            "2": "20 mL",
+            "3": "20 mL",
+            "4": "30 mL",
+            "5": "45 mL",
+            "6": "60 mL",
+            "7": "70 mL",
+            "8": "80 mL",
+            "9": "90 mL",
+            "10": "100 mL"
         }
     },
     {

@@ -45,8 +45,17 @@ const AVOID_SIMILAR_TARGET_REVEAL_MS = 3_000
 const AVOID_SIMILAR_EVALUATION_MS = 30_000
 const AVOID_SIMILAR_VOTE_RESULT_MS = 3_000
 const AVOID_SIMILAR_RESULT_MS = 3_000
+const FULL_WATER_TURN_START_MS = 5_000
+const FULL_WATER_MAX_POUR_ML = 5
+const FULL_WATER_ML_PER_SECOND = 1
+const FULL_WATER_MIN_POUR_ML = 0.1
+const FULL_WATER_SETTLE_MS = 1_500
+const FULL_WATER_WARNING_MS = 2_000
+const FULL_WATER_ROUND_INTRO_MS = 3_000
+const FULL_WATER_BOT_START_MIN_MS = 650
+const FULL_WATER_BOT_START_MAX_MS = 1_250
 const INTERMISSION_DURATION_MS = 15_000
-const SUPPORTED_GAME_IDS = new Set(['reaction_time', 'guess_the_time', 'impostor_color', 'word_memory_challenge', 'avoid_similar_answer'])
+const SUPPORTED_GAME_IDS = new Set(['reaction_time', 'guess_the_time', 'impostor_color', 'word_memory_challenge', 'avoid_similar_answer', 'full_water'])
 function loadGameCatalog(fileName) {
   const source = readFileSync(new URL(`../data/games/${fileName}`, import.meta.url), 'utf8').trim()
   return source ? JSON.parse(source) : []
@@ -202,6 +211,7 @@ function gameView(room) {
   if (room.game.id === 'impostor_color') return impostorColorGameView(room)
   if (room.game.id === 'word_memory_challenge') return wordMemoryGameView(room)
   if (room.game.id === 'avoid_similar_answer') return avoidSimilarGameView(room)
+  if (room.game.id === 'full_water') return fullWaterGameView(room)
   return reactionGameView(room)
 }
 
@@ -374,6 +384,39 @@ function wordMemoryGameView(room) {
   }
 }
 
+function fullWaterGameView(room) {
+  const game = room.game
+  const playerById = new Map(roomPlayers(room).map((player) => [player.id, player]))
+  return {
+    id: game.id,
+    round: game.round,
+    maxRounds: game.maxRounds,
+    phase: game.phase,
+    phaseEndsAt: game.phaseEndsAt,
+    currentPlayerId: game.currentPlayerId,
+    currentPlayerName: playerById.get(game.currentPlayerId)?.name || '',
+    capacityMl: game.capacityMl,
+    waterMl: game.waterMl,
+    pourStartedAt: game.pourStartedAt,
+    pourStartWaterMl: game.pourStartWaterMl,
+    pouredMl: game.pouredMl,
+    turnPouredMl: game.turnPouredMl,
+    hasPoured: game.hasPoured,
+    eliminatedIds: game.eliminatedIds,
+    eliminatedPlayerId: game.eliminatedPlayerId,
+    eliminatedPlayerName: playerById.get(game.eliminatedPlayerId)?.name || '',
+    winnerId: game.winnerId,
+    winnerName: playerById.get(game.winnerId)?.name || '',
+    players: game.playerIds.map((playerId) => ({
+      playerId,
+      playerName: playerById.get(playerId)?.name || '',
+      eliminated: game.eliminatedIds.includes(playerId),
+      warningCount: game.warningCounts.get(playerId) || 0,
+      eliminatedByAfk: game.afkEliminatedIds.includes(playerId),
+    })),
+  }
+}
+
 function avoidSimilarGameView(room) {
   const game = room.game
   const playerById = new Map(roomPlayers(room).map((player) => [player.id, player]))
@@ -497,6 +540,11 @@ function applyRankingPoints(room, game) {
       Number(game.correctPlayerIds.includes(playerId) ? allocation.winners : allocation.losers) || 0,
     ))
   } else if (game.id === 'avoid_similar_answer') {
+    game.playerIds.forEach((playerId) => addPoints(
+      playerId,
+      Number(game.eliminatedIds.includes(playerId) ? allocation.losers : allocation.winners) || 0,
+    ))
+  } else if (game.id === 'full_water') {
     game.playerIds.forEach((playerId) => addPoints(
       playerId,
       Number(game.eliminatedIds.includes(playerId) ? allocation.losers : allocation.winners) || 0,
@@ -643,6 +691,7 @@ function startSelectedGame(room) {
   if (gameId === 'impostor_color') return startImpostorColorGame(room)
   if (gameId === 'word_memory_challenge') return startWordMemoryGame(room)
   if (gameId === 'avoid_similar_answer') return startAvoidSimilarGame(room)
+  if (gameId === 'full_water') return startFullWaterGame(room)
   startReactionTimeGame(room)
 }
 
@@ -1592,6 +1641,221 @@ function startImpostorColorGame(room) {
   setImpostorColorTurn(room)
 }
 
+function activeFullWaterPlayers(room) {
+  return room.game.playerIds.filter((playerId) =>
+    !room.game.eliminatedIds.includes(playerId) && findPlayer(room, playerId),
+  )
+}
+
+function nextFullWaterPlayer(room, currentPlayerId) {
+  const activePlayers = activeFullWaterPlayers(room)
+  if (!activePlayers.length) return null
+  const currentIndex = room.game.playerIds.indexOf(currentPlayerId)
+  for (let offset = 1; offset <= room.game.playerIds.length; offset += 1) {
+    const candidate = room.game.playerIds[(currentIndex + offset) % room.game.playerIds.length]
+    if (activePlayers.includes(candidate)) return candidate
+  }
+  return activePlayers[0]
+}
+
+function fullWaterCapacityForPlayers(room, playerCount) {
+  const configuredValue = gameDefinition(room, 'full_water')?.max_container_limit_per_active_players?.[String(playerCount)]
+  const capacity = Number.parseFloat(configuredValue)
+  return Number.isFinite(capacity) && capacity > 0 ? capacity : Math.max(20, playerCount * 10)
+}
+
+function completeFullWaterGame(room, survivors = activeFullWaterPlayers(room)) {
+  const game = room.game
+  if (!game || game.id !== 'full_water') return
+  clearGameTimer(room)
+  game.phase = 'complete'
+  game.phaseEndsAt = null
+  game.currentPlayerId = null
+  game.pourStartedAt = null
+  game.winnerId = survivors.length === 1 ? survivors[0] : null
+  finalizeTournamentGame(room, game)
+  broadcastRoom(room, 'game_state')
+  scheduleNextGame(room)
+}
+
+function setFullWaterTurn(room) {
+  const game = room.game
+  if (!game || game.id !== 'full_water') return
+  const activePlayers = activeFullWaterPlayers(room)
+  if (activePlayers.length <= 1) return completeFullWaterGame(room, activePlayers)
+  if (!game.currentPlayerId || !activePlayers.includes(game.currentPlayerId)) game.currentPlayerId = activePlayers[0]
+  game.phase = 'waiting_to_pour'
+  game.phaseEndsAt = Date.now() + FULL_WATER_TURN_START_MS
+  game.pourStartedAt = null
+  game.pourStartWaterMl = game.waterMl
+  game.pouredMl = 0
+  game.turnPouredMl = 0
+  game.hasPoured = false
+  game.eliminatedPlayerId = null
+  broadcastRoom(room, 'game_state')
+  scheduleGame(room, FULL_WATER_TURN_START_MS, () => handleFullWaterTurnTimeout(room))
+
+  const player = findPlayer(room, game.currentPlayerId)?.player
+  if (player?.bot) {
+    const botTimer = setTimeout(() => {
+      if (room.game !== game || game.phase !== 'waiting_to_pour') return
+      if (!startFullWaterPour(room, player.id)) return
+      const pourMl = Number((0.5 + Math.random() * (FULL_WATER_MAX_POUR_ML - 0.5)).toFixed(2))
+      const stopTimer = setTimeout(() => {
+        if (!stopFullWaterPour(room, player.id)) return
+        const finishTimer = setTimeout(() => finishFullWaterTurn(room, player.id), 350)
+        game.botTimers.push(finishTimer)
+      }, pourMl * 1_000)
+      game.botTimers.push(stopTimer)
+    }, FULL_WATER_BOT_START_MIN_MS + Math.random() * (FULL_WATER_BOT_START_MAX_MS - FULL_WATER_BOT_START_MIN_MS))
+    game.botTimers.push(botTimer)
+  }
+}
+
+function beginFullWaterRound(room) {
+  const game = room.game
+  if (!game || game.id !== 'full_water') return
+  const activePlayers = activeFullWaterPlayers(room)
+  if (activePlayers.length <= 1) return completeFullWaterGame(room, activePlayers)
+  game.waterMl = 0
+  game.pouredMl = 0
+  game.pourStartedAt = null
+  game.pourStartWaterMl = 0
+  game.turnPouredMl = 0
+  game.hasPoured = false
+  game.eliminatedPlayerId = null
+  game.currentPlayerId = activePlayers[0]
+  game.phase = 'round_intro'
+  game.phaseEndsAt = Date.now() + FULL_WATER_ROUND_INTRO_MS
+  broadcastRoom(room, 'game_state')
+  scheduleGame(room, FULL_WATER_ROUND_INTRO_MS, () => setFullWaterTurn(room))
+}
+
+function finishFullWaterRound(room) {
+  const game = room.game
+  if (!game || game.id !== 'full_water') return
+  const activePlayers = activeFullWaterPlayers(room)
+  if (game.round >= game.maxRounds || activePlayers.length <= 1) return completeFullWaterGame(room, activePlayers)
+  game.round += 1
+  beginFullWaterRound(room)
+}
+
+function handleFullWaterTurnTimeout(room) {
+  const game = room.game
+  if (!game || game.id !== 'full_water' || game.phase !== 'waiting_to_pour') return
+  const playerId = game.currentPlayerId
+  const warnings = (game.warningCounts.get(playerId) || 0) + 1
+  game.warningCounts.set(playerId, warnings)
+  if (warnings === 1) {
+    game.phase = 'warning'
+    game.phaseEndsAt = Date.now() + FULL_WATER_WARNING_MS
+    broadcastRoom(room, 'game_state')
+    scheduleGame(room, FULL_WATER_WARNING_MS, () => {
+      game.currentPlayerId = nextFullWaterPlayer(room, playerId)
+      setFullWaterTurn(room)
+    })
+    return
+  }
+  game.eliminatedIds.push(playerId)
+  game.afkEliminatedIds.push(playerId)
+  game.eliminatedPlayerId = playerId
+  game.phase = 'afk_eliminated'
+  game.phaseEndsAt = Date.now() + FULL_WATER_WARNING_MS
+  broadcastRoom(room, 'game_state')
+  scheduleGame(room, FULL_WATER_WARNING_MS, () => finishFullWaterRound(room))
+}
+
+function settleFullWaterTurn(room, overflowed) {
+  const game = room.game
+  game.phase = overflowed ? 'overflowing' : 'settling'
+  game.phaseEndsAt = Date.now() + FULL_WATER_SETTLE_MS
+  broadcastRoom(room, 'game_state')
+  scheduleGame(room, FULL_WATER_SETTLE_MS, () => {
+    if (overflowed) return finishFullWaterRound(room)
+    game.currentPlayerId = nextFullWaterPlayer(room, game.currentPlayerId)
+    setFullWaterTurn(room)
+  })
+}
+
+function startFullWaterPour(room, clientId) {
+  const game = room.game
+  if (!game || game.id !== 'full_water' || !['waiting_to_pour', 'ready_to_finish'].includes(game.phase) || game.currentPlayerId !== clientId) return false
+  if (game.turnPouredMl >= FULL_WATER_MAX_POUR_ML) return false
+  game.phase = 'pouring'
+  game.pourStartedAt = Date.now()
+  game.pourStartWaterMl = game.waterMl
+  game.pouredMl = 0
+  const remainingMl = FULL_WATER_MAX_POUR_ML - game.turnPouredMl
+  game.phaseEndsAt = game.pourStartedAt + remainingMl * 1_000
+  broadcastRoom(room, 'game_state')
+  scheduleGame(room, remainingMl * 1_000, () => stopFullWaterPour(room, clientId, true))
+  return true
+}
+
+function stopFullWaterPour(room, clientId, autoStopped = false) {
+  const game = room.game
+  if (!game || game.id !== 'full_water' || game.phase !== 'pouring' || game.currentPlayerId !== clientId) return false
+  const remainingMl = FULL_WATER_MAX_POUR_ML - game.turnPouredMl
+  const elapsedMl = Math.max(FULL_WATER_MIN_POUR_ML, (Date.now() - game.pourStartedAt) / 1_000 * FULL_WATER_ML_PER_SECOND)
+  const pouredMl = Number((autoStopped ? remainingMl : Math.min(remainingMl, elapsedMl)).toFixed(2))
+  game.pouredMl = pouredMl
+  game.turnPouredMl = Number((game.turnPouredMl + pouredMl).toFixed(2))
+  game.hasPoured = true
+  game.waterMl = Number((game.pourStartWaterMl + pouredMl).toFixed(2))
+  game.pourStartedAt = null
+  const overflowed = game.waterMl > game.capacityMl
+  if (overflowed) {
+    game.eliminatedIds.push(clientId)
+    game.eliminatedPlayerId = clientId
+    settleFullWaterTurn(room, true)
+    return true
+  }
+  if (game.turnPouredMl >= FULL_WATER_MAX_POUR_ML) {
+    settleFullWaterTurn(room, false)
+    return true
+  }
+  game.phase = 'ready_to_finish'
+  game.phaseEndsAt = null
+  broadcastRoom(room, 'game_state')
+  return true
+}
+
+function finishFullWaterTurn(room, clientId) {
+  const game = room.game
+  if (!game || game.id !== 'full_water' || game.phase !== 'ready_to_finish' || game.currentPlayerId !== clientId || !game.hasPoured) return false
+  settleFullWaterTurn(room, false)
+  return true
+}
+
+function startFullWaterGame(room) {
+  const playerIds = tournamentGamePlayers(room)
+  room.game = {
+    id: 'full_water',
+    round: 1,
+    maxRounds: maxRoundsForRoom(room, 'full_water', 1),
+    phase: 'round_intro',
+    phaseEndsAt: null,
+    playerIds,
+    currentPlayerId: playerIds[0] || null,
+    capacityMl: fullWaterCapacityForPlayers(room, playerIds.length),
+    waterMl: 0,
+    pourStartedAt: null,
+    pourStartWaterMl: 0,
+    pouredMl: 0,
+    turnPouredMl: 0,
+    hasPoured: false,
+    eliminatedIds: [],
+    afkEliminatedIds: [],
+    eliminatedPlayerId: null,
+    winnerId: null,
+    warningCounts: new Map(),
+    timer: null,
+    botTimers: [],
+  }
+  broadcastRoom(room, 'game_started')
+  beginFullWaterRound(room)
+}
+
 function clearDisconnect(room, clientId) {
   const timer = room.disconnectTimers.get(clientId)
   if (timer) clearTimeout(timer)
@@ -1763,12 +2027,41 @@ function removeImpostorColorPlayer(room, clientId) {
   return true
 }
 
+function removeFullWaterPlayer(room, clientId) {
+  const game = room.game
+  if (!game || game.id !== 'full_water') return removePlayer(room, clientId)
+  if (!removePlayer(room, clientId)) return false
+
+  const wasCurrentPlayer = game.currentPlayerId === clientId
+  game.playerIds = game.playerIds.filter((playerId) => playerId !== clientId)
+  game.eliminatedIds = game.eliminatedIds.filter((playerId) => playerId !== clientId)
+  game.afkEliminatedIds = game.afkEliminatedIds.filter((playerId) => playerId !== clientId)
+  if (game.eliminatedPlayerId === clientId) game.eliminatedPlayerId = null
+
+  const survivors = activeFullWaterPlayers(room)
+  if (game.phase === 'complete' || survivors.length <= 1) {
+    completeFullWaterGame(room, survivors)
+    return true
+  }
+  if (wasCurrentPlayer) {
+    clearGameTimer(room)
+    game.currentPlayerId = survivors[0]
+    game.pourStartedAt = null
+    game.pouredMl = 0
+    setFullWaterTurn(room)
+    return true
+  }
+  broadcastRoom(room, 'game_state')
+  return true
+}
+
 function removeGamePlayer(room, clientId) {
   if (room.game?.id === 'reaction_time') return removeReactionPlayer(room, clientId)
   if (room.game?.id === 'guess_the_time') return removeGuessTimePlayer(room, clientId)
   if (room.game?.id === 'word_memory_challenge') return removeWordMemoryPlayer(room, clientId)
   if (room.game?.id === 'avoid_similar_answer') return removeAvoidSimilarPlayer(room, clientId)
   if (room.game?.id === 'impostor_color') return removeImpostorColorPlayer(room, clientId)
+  if (room.game?.id === 'full_water') return removeFullWaterPlayer(room, clientId)
   return removePlayer(room, clientId)
 }
 
@@ -2023,6 +2316,21 @@ wss.on('connection', (socket) => {
       if (!pickImpostorColorBottle(room, clientId, Number(message.bottleIndex))) {
         return reject(socket, 'Wait for your turn and choose an unopened bottle.')
       }
+      return
+    }
+    if (message.type === 'full_water_pour_start') {
+      if (room.game?.id !== 'full_water') return reject(socket, 'Full Water is not active.')
+      if (!startFullWaterPour(room, clientId)) return reject(socket, 'Wait for your turn, then start pouring.')
+      return
+    }
+    if (message.type === 'full_water_pour_stop') {
+      if (room.game?.id !== 'full_water') return reject(socket, 'Full Water is not active.')
+      if (!stopFullWaterPour(room, clientId)) return reject(socket, 'You are not currently pouring.')
+      return
+    }
+    if (message.type === 'full_water_finish_turn') {
+      if (room.game?.id !== 'full_water') return reject(socket, 'Full Water is not active.')
+      if (!finishFullWaterTurn(room, clientId)) return reject(socket, 'Pour water first, then finish your turn while paused.')
       return
     }
     if (message.type === 'skip_intermission') {
