@@ -55,8 +55,10 @@ const FULL_WATER_ROUND_INTRO_MS = 3_000
 const FULL_WATER_BOT_START_MIN_MS = 650
 const FULL_WATER_BOT_START_MAX_MS = 1_250
 const TYPE_IT_PREPARATION_MS = 5_000
-const TYPE_IT_RESULT_MS = 3_000
-const TYPE_IT_TIME_LIMITS_MS = [20_000, 25_000, 30_000]
+const TYPE_IT_TIMEOUT_FEEDBACK_MS = 600
+const TYPE_IT_RESULT_MS = 5_000
+const TYPE_IT_TIME_LIMITS_MS = [30_000, 45_000, 60_000]
+const TYPE_IT_MIN_ACCURACY = 75
 const TYPE_IT_BOT_STEP_MIN_MS = 55
 const TYPE_IT_BOT_STEP_MAX_MS = 130
 const INTERMISSION_DURATION_MS = 15_000
@@ -1386,10 +1388,20 @@ function beginTypeItTyping(room) {
   game.roundStartedAt = Date.now()
   game.phaseEndsAt = game.roundStartedAt + game.roundLimitMs
   broadcastRoom(room, 'game_state')
-  scheduleGame(room, game.roundLimitMs, () => resolveTypeItRound(room))
+  scheduleGame(room, game.roundLimitMs, () => beginTypeItTimeoutFeedback(room))
   activeTypeItPlayers(room)
     .filter((playerId) => findPlayer(room, playerId)?.player.bot)
     .forEach((playerId) => scheduleTypeItBotStep(room, playerId))
+}
+
+function beginTypeItTimeoutFeedback(room) {
+  const game = room.game
+  if (!game || game.id !== 'type_it' || game.phase !== 'typing') return
+  clearGameTimer(room)
+  game.phase = 'time_expired'
+  game.phaseEndsAt = Date.now() + TYPE_IT_TIMEOUT_FEEDBACK_MS
+  broadcastRoom(room, 'game_state')
+  scheduleGame(room, TYPE_IT_TIMEOUT_FEEDBACK_MS, () => resolveTypeItRound(room))
 }
 
 function updateTypeItInput(room, clientId, value, allowBot = false) {
@@ -1412,12 +1424,17 @@ function updateTypeItInput(room, clientId, value, allowBot = false) {
 
 function resolveTypeItRound(room) {
   const game = room.game
-  if (!game || game.id !== 'type_it' || game.phase !== 'typing') return
+  if (!game || game.id !== 'type_it' || !['typing', 'time_expired'].includes(game.phase)) return
   clearGameTimer(room)
   const players = activeTypeItPlayers(room)
   const incomplete = players.filter((playerId) => !game.results.get(playerId)?.finished)
-  if (incomplete.length) {
-    game.roundEliminatedIds = incomplete
+  const belowAccuracy = players.filter((playerId) => {
+    const result = game.results.get(playerId)
+    return result?.finished && result.accuracy < TYPE_IT_MIN_ACCURACY
+  })
+  const automaticEliminations = [...new Set([...incomplete, ...belowAccuracy])]
+  if (automaticEliminations.length) {
+    game.roundEliminatedIds = automaticEliminations
   } else if (players.length) {
     const loser = [...players].sort((left, right) => {
       const leftResult = game.results.get(left)

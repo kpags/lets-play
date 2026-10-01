@@ -1,5 +1,5 @@
 <script setup>
-import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
+import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import freeForAllCatalog from '../data/games/free_for_all.json'
 import forFunCatalog from '../data/games/for_fun.json'
 import teamCatalog from '../data/games/team.json'
@@ -20,6 +20,7 @@ const avoidSimilarInput = ref('')
 const typeItInput = ref('')
 const typeItInputRef = ref(null)
 const typeItInputHydrated = ref(false)
+const typeItSpectatedPlayerId = ref('')
 const reactionClockNow = ref(Date.now())
 const reactionServerClockOffset = ref(0)
 const showReactionMenu = ref(false)
@@ -159,27 +160,67 @@ const avoidSimilarGame = computed(() => reactionGame.value?.id === 'avoid_simila
 const impostorColorGame = computed(() => reactionGame.value?.id === 'impostor_color' ? reactionGame.value : null)
 const fullWaterGame = computed(() => reactionGame.value?.id === 'full_water' ? reactionGame.value : null)
 const typeItGame = computed(() => reactionGame.value?.id === 'type_it' ? reactionGame.value : null)
+const isTypeItSpectator = computed(() =>
+  onlineRoom.value?.tournament?.format === 'Elimination'
+  && (onlineRoom.value.tournament.eliminatedIds.includes(clientId)
+    || typeItGame.value?.eliminatedIds.includes(clientId)),
+)
 const typeItCountdown = computed(() => {
   if (!typeItGame.value?.phaseEndsAt) return null
+  if (typeItGame.value.phase === 'time_expired') return 0
   const serverNow = reactionClockNow.value + reactionServerClockOffset.value
   return Math.max(0, Math.ceil((typeItGame.value.phaseEndsAt - serverNow) / 1_000))
 })
 const typeItCanType = computed(() =>
   typeItGame.value?.phase === 'typing'
   && !typeItGame.value.eliminatedIds.includes(clientId)
-  && !isTournamentSpectator.value
+  && !isTypeItSpectator.value
   && !showReactionMenu.value
   && !typeItGame.value.players.find((player) => player.playerId === clientId)?.finished,
+)
+const typeItSpectatablePlayers = computed(() =>
+  isTypeItSpectator.value
+    ? (typeItGame.value?.players || []).filter((player) => !player.eliminated)
+    : [],
+)
+const typeItSpectatingPlayer = computed(() =>
+  typeItSpectatablePlayers.value.find((player) => player.playerId === typeItSpectatedPlayerId.value)
+  || typeItSpectatablePlayers.value[0]
+  || null,
+)
+const typeItIsSpectating = computed(() => Boolean(typeItSpectatingPlayer.value))
+const typeItDisplayedInput = computed(() =>
+  typeItIsSpectating.value ? typeItSpectatingPlayer.value?.typedText || '' : typeItInput.value,
+)
+const typeItSpectatorProgress = computed(() => {
+  const player = typeItSpectatingPlayer.value
+  if (!player) return ''
+  return `${player.typedLength} / ${typeItGame.value?.phrase?.length || 0}`
+})
+const typeItShowsProgressCaret = computed(() =>
+  typeItGame.value?.phase === 'typing' && (typeItCanType.value || typeItIsSpectating.value),
 )
 const typeItRows = computed(() => {
   const phrase = typeItGame.value?.phrase || ''
   let offset = 0
-  const words = phrase.split(' ').map((word, index) => {
-    const item = { word, start: offset, key: `${offset}-${word}` }
-    offset += word.length + (index < phrase.split(' ').length - 1 ? 1 : 0)
+  const phraseWords = phrase.split(' ')
+  const words = phraseWords.map((word, index) => {
+    const item = { word, start: offset, end: offset + word.length, key: `${offset}-${word}` }
+    offset += word.length + (index < phraseWords.length - 1 ? 1 : 0)
     return item
   })
   return Array.from({ length: Math.ceil(words.length / 5) }, (_, index) => words.slice(index * 5, index * 5 + 5))
+})
+const typeItVisibleRows = computed(() => {
+  const rows = typeItRows.value
+  if (!rows.length) return []
+  const caret = Math.min(typeItDisplayedInput.value.length, typeItGame.value?.phrase?.length || 0)
+  let currentRow = 0
+  rows.forEach((row, index) => {
+    if (caret >= row[0].start) currentRow = index
+  })
+  const start = Math.min(currentRow, Math.max(0, rows.length - 2))
+  return rows.slice(start, start + 2)
 })
 const typeItClockStyle = computed(() => {
   const game = typeItGame.value
@@ -192,15 +233,19 @@ const typeItStatus = computed(() => {
   const game = typeItGame.value
   if (!game) return ''
   if (game.phase === 'preparing') return `Round ${game.round} starts in ${typeItCountdown.value}.`
-  if (game.phase === 'typing') return typeItGame.value.players.find((player) => player.playerId === clientId)?.finished ? 'Finished — waiting for the others.' : 'Type the phrase exactly.'
+  if (game.phase === 'typing') {
+    if (typeItIsSpectating.value) return `Spectating ${typeItSpectatingPlayer.value.playerName}.`
+    return typeItGame.value.players.find((player) => player.playerId === clientId)?.finished ? 'Finished — waiting for the others.' : 'Type the phrase exactly.'
+  }
+  if (game.phase === 'time_expired') return "Time's up!"
   if (game.phase === 'round_result') return 'Round results'
   if (game.phase === 'complete') return game.winnerName ? `${game.winnerName} wins!` : 'Type It complete!'
   return ''
 })
 function typeItCharacterState(index) {
   const phrase = typeItGame.value?.phrase || ''
-  if (index >= typeItInput.value.length) return 'pending'
-  return typeItInput.value[index] === phrase[index] ? 'correct' : 'incorrect'
+  if (index >= typeItDisplayedInput.value.length) return 'pending'
+  return typeItDisplayedInput.value[index] === phrase[index] ? 'correct' : 'incorrect'
 }
 const fullWaterBottleVisible = computed(() => {
   const phase = fullWaterGame.value?.phase
@@ -755,6 +800,24 @@ function submitWordMemoryAnswer() {
 function focusTypeItInput() {
   if (typeItCanType.value) typeItInputRef.value?.focus()
 }
+
+function selectTypeItSpectator(player) {
+  if (!isTypeItSpectator.value || player.eliminated) return
+  typeItSpectatedPlayerId.value = player.playerId
+}
+
+watch(typeItSpectatablePlayers, (players) => {
+  if (!players.some((player) => player.playerId === typeItSpectatedPlayerId.value)) {
+    typeItSpectatedPlayerId.value = players[0]?.playerId || ''
+  }
+}, { immediate: true })
+
+watch(typeItCanType, (canType, wasTyping) => {
+  if (!canType || wasTyping) return
+  nextTick(() => {
+    if (typeItCanType.value) typeItInputRef.value?.focus({ preventScroll: true })
+  })
+})
 
 function sendTypeItInput(event) {
   if (!typeItCanType.value) return
@@ -1435,7 +1498,16 @@ onBeforeUnmount(() => {
 
   <main v-else-if="currentView === 'type-it' || gameInstructions?.game?.id === 'type_it'" class="reaction-page type-it-page" aria-labelledby="type-it-title">
     <header class="reaction-page__header">
-      <button class="reaction-menu-toggle" type="button" :aria-expanded="showReactionMenu" aria-controls="type-it-game-menu" @click="toggleReactionMenu">&#9881;<span class="sr-only">Game menu</span></button>
+      <button
+        class="reaction-menu-trigger"
+        type="button"
+        aria-label="Open game menu"
+        aria-controls="type-it-game-menu"
+        :aria-expanded="showReactionMenu"
+        @click="toggleReactionMenu"
+      >
+        <span aria-hidden="true">&#9881;</span>
+      </button>
       <div>
         <p class="reaction-page__eyebrow">LET'S PLAY!</p>
         <h1 id="type-it-title">Type It</h1>
@@ -1454,15 +1526,22 @@ onBeforeUnmount(() => {
     <section class="type-it-field" aria-live="polite">
       <p v-if="typeItStatus" class="type-it-field__status">{{ typeItStatus }}</p>
       <div class="type-it-clock-wrap">
-        <div class="type-it-clock" :class="{ 'type-it-clock--running': typeItGame?.phase === 'typing' }" :style="typeItClockStyle" aria-label="Round countdown">
+        <div class="type-it-clock" :class="{ 'type-it-clock--running': typeItGame?.phase === 'typing', 'type-it-clock--expired': typeItGame?.phase === 'time_expired' }" :style="typeItClockStyle" aria-label="Round countdown">
           <i class="type-it-clock__hand type-it-clock__hand--minute"></i>
           <i class="type-it-clock__hand type-it-clock__hand--second"></i>
           <b>{{ typeItCountdown ?? 0 }}</b>
         </div>
       </div>
 
-      <div class="type-it-phrase" :class="{ 'type-it-phrase--active': typeItCanType }" role="group" aria-label="Typing phrase" @click="focusTypeItInput">
+      <p v-if="typeItIsSpectating && typeItGame?.phase === 'typing'" class="type-it-spectator-banner">
+        <span>Spectating</span>
+        <strong>{{ typeItSpectatingPlayer?.playerName }}</strong>
+        <small>{{ typeItSpectatorProgress }} characters typed</small>
+      </p>
+
+      <div :key="typeItSpectatingPlayer?.playerId || clientId" class="type-it-phrase" :class="{ 'type-it-phrase--active': typeItCanType, 'type-it-phrase--spectating': typeItIsSpectating }" role="group" :aria-label="typeItIsSpectating ? `Spectating ${typeItSpectatingPlayer?.playerName}'s typing progress` : 'Typing phrase'" @click="focusTypeItInput">
         <input
+          v-if="!isTypeItSpectator"
           ref="typeItInputRef"
           v-model="typeItInput"
           class="type-it-phrase__capture"
@@ -1475,14 +1554,18 @@ onBeforeUnmount(() => {
           aria-label="Type the phrase exactly"
           @input="sendTypeItInput"
         />
-        <div v-for="(row, rowIndex) in typeItRows" :key="`row-${rowIndex}`" class="type-it-phrase__row">
+        <div v-for="(row, rowIndex) in typeItVisibleRows" :key="`row-${rowIndex}`" class="type-it-phrase__row">
           <span v-for="word in row" :key="word.key" class="type-it-phrase__word">
-            <span v-for="(character, index) in word.word" :key="`${word.start}-${index}`" class="type-it-phrase__character" :class="`type-it-phrase__character--${typeItCharacterState(word.start + index)}`">{{ character }}</span>
+            <template v-for="(character, index) in word.word" :key="`${word.start}-${index}`">
+              <i v-if="typeItShowsProgressCaret && typeItDisplayedInput.length === word.start + index" class="type-it-phrase__cursor" aria-hidden="true"></i>
+              <span class="type-it-phrase__character" :class="`type-it-phrase__character--${typeItCharacterState(word.start + index)}`">{{ character }}</span>
+            </template>
+            <i v-if="typeItShowsProgressCaret && typeItDisplayedInput.length === word.end" class="type-it-phrase__cursor" aria-hidden="true"></i>
           </span>
         </div>
       </div>
 
-      <p v-if="typeItCanType" class="type-it-field__hint">Tap the phrase and type. Spaces, case, and punctuation count.</p>
+      <p v-if="typeItCanType" class="type-it-field__hint">Type the phrase exactly. Spaces, case, and punctuation count.</p>
 
       <Transition name="type-it-results">
         <section v-if="typeItGame?.phase === 'round_result'" class="type-it-results" aria-label="Round results">
@@ -1494,11 +1577,27 @@ onBeforeUnmount(() => {
       </Transition>
 
       <section class="type-it-players" aria-label="Player typing status">
-        <article v-for="player in typeItGame?.players || []" :key="player.playerId" class="type-it-player" :class="{ 'type-it-player--out': player.eliminated, 'type-it-player--finished': player.finished && !player.eliminated }">
+        <article
+          v-for="player in typeItGame?.players || []"
+          :key="player.playerId"
+          class="type-it-player"
+          :class="{
+            'type-it-player--out': player.eliminated,
+            'type-it-player--finished': player.finished && !player.eliminated,
+            'type-it-player--spectatable': isTypeItSpectator && !player.eliminated,
+            'type-it-player--selected': typeItIsSpectating && player.playerId === typeItSpectatingPlayer?.playerId,
+          }"
+          :role="isTypeItSpectator && !player.eliminated ? 'button' : undefined"
+          :tabindex="isTypeItSpectator && !player.eliminated ? 0 : undefined"
+          :aria-label="isTypeItSpectator && !player.eliminated ? `Spectate ${player.playerName}` : undefined"
+          @click="selectTypeItSpectator(player)"
+          @keydown.enter.prevent="selectTypeItSpectator(player)"
+          @keydown.space.prevent="selectTypeItSpectator(player)"
+        >
           <strong>{{ player.playerName }}</strong>
           <span v-if="['round_result', 'complete'].includes(typeItGame?.phase)">{{ player.eliminatedThisRound || player.eliminated ? 'Out' : 'Safe' }}<small>{{ player.accuracy?.toFixed?.(2) ?? '0.00' }}% · {{ player.speedSeconds?.toFixed?.(2) ?? '—' }}s</small></span>
           <span v-else-if="player.finished">Finished</span>
-          <span v-else>{{ player.typedLength }} / {{ typeItGame?.phrase?.length || 0 }}</span>
+          <span v-else>{{ player.typedLength }} / {{ typeItGame?.phrase?.length || 0 }}<small v-if="typeItIsSpectating && player.playerId === typeItSpectatingPlayer?.playerId">Watching</small></span>
         </article>
       </section>
     </section>
