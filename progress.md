@@ -2,6 +2,10 @@ Original prompt: Let's create a browser game called "Let's Play!" using VueJS. U
 
 ## Progress
 
+- 2026-10-01: Began authoritative Type It implementation. Registered the game, added server-owned phrase selection, preparation and typing timers, incremental input, bot typing, result scoring/elimination, Ranking points, snapshots, and player-removal handling. Client screen and browser verification are next.
+- 2026-10-01: Completed Type It client and authority integration. The responsive five-word phrase grid, case-sensitive per-character feedback, hidden mobile-capable capture input, analog round clock, player progress/results, and reduced-motion styles are live. A 390px browser room run verified manual selection, instructions, preparation, typing, bot progress, clean console output, and the results screen. Fixed a rapid-typing race where stale snapshots could erase local keystrokes; a second browser run confirmed all 170 typed characters reach the authoritative game state. Server syntax and a clean Vite build to `.verify-dist-type-it` passed; normal `dist` remains OneDrive-locked.
+- 2026-10-01: Completed Type It mobile phrase-grid polish. Words now use no-wrap, compact narrow-screen typography, and slightly condensed spacing while retaining exactly five columns. Browser measurements covered every `type_it` phrase at 320px and 390px: no word wrapped or overflowed and no phrase scrolled horizontally. Server syntax and a clean Vite build to `.verify-dist-type-it-mobile` passed; the browser workflow showed no console errors.
+
 - 2026-09-25: Scaffolded the Vue/Vite landing-page application and added responsive desktop/mobile background handling.
 - 2026-09-25: Production build passed. Desktop Playwright check passed: title, menu, selected desktop artwork, and focus state render correctly without console errors.
 - 2026-09-25: Mobile portrait browser check passed at 390 x 844: selected `mobile.png`, rendered both controls at touch-friendly 60 px heights, and confirmed hover, keyboard focus, text-state output, and zero browser errors.

@@ -54,8 +54,13 @@ const FULL_WATER_WARNING_MS = 2_000
 const FULL_WATER_ROUND_INTRO_MS = 3_000
 const FULL_WATER_BOT_START_MIN_MS = 650
 const FULL_WATER_BOT_START_MAX_MS = 1_250
+const TYPE_IT_PREPARATION_MS = 5_000
+const TYPE_IT_RESULT_MS = 3_000
+const TYPE_IT_TIME_LIMITS_MS = [20_000, 25_000, 30_000]
+const TYPE_IT_BOT_STEP_MIN_MS = 55
+const TYPE_IT_BOT_STEP_MAX_MS = 130
 const INTERMISSION_DURATION_MS = 15_000
-const SUPPORTED_GAME_IDS = new Set(['reaction_time', 'guess_the_time', 'impostor_color', 'word_memory_challenge', 'avoid_similar_answer', 'full_water'])
+const SUPPORTED_GAME_IDS = new Set(['reaction_time', 'guess_the_time', 'impostor_color', 'word_memory_challenge', 'avoid_similar_answer', 'full_water', 'type_it'])
 function loadGameCatalog(fileName) {
   const source = readFileSync(new URL(`../data/games/${fileName}`, import.meta.url), 'utf8').trim()
   return source ? JSON.parse(source) : []
@@ -212,6 +217,7 @@ function gameView(room) {
   if (room.game.id === 'word_memory_challenge') return wordMemoryGameView(room)
   if (room.game.id === 'avoid_similar_answer') return avoidSimilarGameView(room)
   if (room.game.id === 'full_water') return fullWaterGameView(room)
+  if (room.game.id === 'type_it') return typeItGameView(room)
   return reactionGameView(room)
 }
 
@@ -384,6 +390,39 @@ function wordMemoryGameView(room) {
   }
 }
 
+function typeItGameView(room) {
+  const game = room.game
+  const playerById = new Map(roomPlayers(room).map((player) => [player.id, player]))
+  const showResults = ['round_result', 'complete'].includes(game.phase)
+  return {
+    id: game.id,
+    round: game.round,
+    maxRounds: game.maxRounds,
+    phase: game.phase,
+    phaseEndsAt: game.phaseEndsAt,
+    roundLimitMs: game.roundLimitMs,
+    phrase: game.phrase,
+    eliminatedIds: game.eliminatedIds,
+    roundEliminatedIds: game.roundEliminatedIds,
+    winnerId: game.winnerId,
+    winnerName: playerById.get(game.winnerId)?.name || '',
+    players: game.playerIds.map((playerId) => {
+      const result = game.results.get(playerId)
+      return {
+        playerId,
+        playerName: playerById.get(playerId)?.name || '',
+        eliminated: game.eliminatedIds.includes(playerId),
+        eliminatedThisRound: game.roundEliminatedIds.includes(playerId),
+        typedText: game.inputs.get(playerId) || '',
+        typedLength: (game.inputs.get(playerId) || '').length,
+        finished: Boolean(result?.finished),
+        accuracy: showResults ? result?.accuracy ?? null : null,
+        speedSeconds: showResults ? result?.speedSeconds ?? null : null,
+      }
+    }),
+  }
+}
+
 function fullWaterGameView(room) {
   const game = room.game
   const playerById = new Map(roomPlayers(room).map((player) => [player.id, player]))
@@ -549,6 +588,11 @@ function applyRankingPoints(room, game) {
       playerId,
       Number(game.eliminatedIds.includes(playerId) ? allocation.losers : allocation.winners) || 0,
     ))
+  } else if (game.id === 'type_it') {
+    game.playerIds.forEach((playerId) => addPoints(
+      playerId,
+      Number(game.eliminatedIds.includes(playerId) ? allocation.losers : allocation.winners) || 0,
+    ))
   }
   game.pointsApplied = true
 }
@@ -692,6 +736,7 @@ function startSelectedGame(room) {
   if (gameId === 'word_memory_challenge') return startWordMemoryGame(room)
   if (gameId === 'avoid_similar_answer') return startAvoidSimilarGame(room)
   if (gameId === 'full_water') return startFullWaterGame(room)
+  if (gameId === 'type_it') return startTypeItGame(room)
   startReactionTimeGame(room)
 }
 
@@ -1228,6 +1273,198 @@ function startWordMemoryGame(room) {
   }
   broadcastRoom(room, 'game_started')
   beginWordMemoryRound(room)
+}
+
+function activeTypeItPlayers(room) {
+  return room.game.playerIds.filter((playerId) =>
+    !room.game.eliminatedIds.includes(playerId) && findPlayer(room, playerId),
+  )
+}
+
+function typeItRoundLimitMs(room, round) {
+  if (room.format === 'Ranking') return TYPE_IT_TIME_LIMITS_MS[2]
+  return TYPE_IT_TIME_LIMITS_MS[Math.min(TYPE_IT_TIME_LIMITS_MS.length - 1, Math.max(0, round - 1))]
+}
+
+function chooseTypeItPhrase(game, room) {
+  const roundKey = room.format === 'Ranking' ? 'round_3' : `round_${game.round}`
+  const phrases = (DATASETS.type_it?.[roundKey] || []).map((phrase) => String(phrase || '')).filter(Boolean)
+  const available = phrases.filter((phrase) => !game.usedPhrases.includes(phrase))
+  const pool = available.length ? available : phrases
+  if (!pool.length) return ''
+  const phrase = pool[Math.floor(Math.random() * pool.length)]
+  game.usedPhrases.push(phrase)
+  return phrase
+}
+
+function typeItResult(phrase, typedText, finishedAt, startedAt) {
+  const phraseWords = phrase.trim().split(/\s+/).filter(Boolean)
+  const typedWords = typedText.trim().split(/\s+/).filter(Boolean)
+  const correctWords = phraseWords.filter((word, index) => typedWords[index] === word).length
+  const accuracy = phraseWords.length ? Number((correctWords / phraseWords.length * 100).toFixed(2)) : 0
+  const speedMs = Math.max(0, Number(finishedAt || Date.now()) - Number(startedAt || Date.now()))
+  return {
+    finished: true,
+    correctWords,
+    accuracy,
+    speedMs,
+    speedSeconds: Number((speedMs / 1_000).toFixed(2)),
+  }
+}
+
+function completeTypeItGame(room, survivors = activeTypeItPlayers(room)) {
+  const game = room.game
+  clearGameTimer(room)
+  game.phase = 'complete'
+  game.phaseEndsAt = null
+  game.winnerId = survivors.length === 1 ? survivors[0] : null
+  finalizeTournamentGame(room, game)
+  broadcastRoom(room, 'game_state')
+  scheduleNextGame(room)
+}
+
+function beginTypeItRound(room) {
+  const game = room.game
+  const players = activeTypeItPlayers(room)
+  if (players.length <= 1) return completeTypeItGame(room, players)
+  const phrase = chooseTypeItPhrase(game, room)
+  if (!phrase) return completeTypeItGame(room, players)
+  game.phrase = phrase
+  game.roundLimitMs = typeItRoundLimitMs(room, game.round)
+  game.inputs = new Map(players.map((playerId) => [playerId, '']))
+  game.results = new Map()
+  game.roundEliminatedIds = []
+  game.roundStartedAt = null
+  game.phase = 'preparing'
+  game.phaseEndsAt = Date.now() + TYPE_IT_PREPARATION_MS
+  broadcastRoom(room, 'game_state')
+  scheduleGame(room, TYPE_IT_PREPARATION_MS, () => beginTypeItTyping(room))
+}
+
+function typeItAllFinished(room) {
+  return activeTypeItPlayers(room).every((playerId) => room.game.results.get(playerId)?.finished)
+}
+
+function scheduleTypeItBotStep(room, playerId) {
+  const game = room.game
+  const player = findPlayer(room, playerId)?.player
+  if (!player?.bot || !game || game.id !== 'type_it' || game.phase !== 'typing' || game.results.get(playerId)?.finished) return
+  const multiplier = game.botRateById.get(playerId) || 1
+  const delay = Math.round((TYPE_IT_BOT_STEP_MIN_MS + Math.random() * (TYPE_IT_BOT_STEP_MAX_MS - TYPE_IT_BOT_STEP_MIN_MS)) * multiplier)
+  const timer = setTimeout(() => {
+    const current = room.game
+    if (!current || current.id !== 'type_it' || current.phase !== 'typing' || current.results.get(playerId)?.finished) return
+    const typed = current.inputs.get(playerId) || ''
+    const needsCorrection = current.botCorrectionIds.has(playerId)
+    let next = typed
+    if (needsCorrection) {
+      next = typed.slice(0, -1)
+      current.botCorrectionIds.delete(playerId)
+    } else {
+      const expected = current.phrase[typed.length]
+      const makeMistake = expected && expected !== ' ' && Math.random() < 0.055
+      if (makeMistake) {
+        const alternatives = 'abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789'
+        let wrong = alternatives[Math.floor(Math.random() * alternatives.length)]
+        if (wrong === expected) wrong = wrong === 'z' ? 'x' : 'z'
+        next += wrong
+        current.botCorrectionIds.add(playerId)
+      } else {
+        next += expected || ''
+      }
+    }
+    updateTypeItInput(room, playerId, next, true)
+    scheduleTypeItBotStep(room, playerId)
+  }, delay)
+  game.botTimers.push(timer)
+}
+
+function beginTypeItTyping(room) {
+  const game = room.game
+  if (!game || game.id !== 'type_it') return
+  game.phase = 'typing'
+  game.roundStartedAt = Date.now()
+  game.phaseEndsAt = game.roundStartedAt + game.roundLimitMs
+  broadcastRoom(room, 'game_state')
+  scheduleGame(room, game.roundLimitMs, () => resolveTypeItRound(room))
+  activeTypeItPlayers(room)
+    .filter((playerId) => findPlayer(room, playerId)?.player.bot)
+    .forEach((playerId) => scheduleTypeItBotStep(room, playerId))
+}
+
+function updateTypeItInput(room, clientId, value, allowBot = false) {
+  const game = room.game
+  if (!game || game.id !== 'type_it' || game.phase !== 'typing') return false
+  const player = findPlayer(room, clientId)?.player
+  if (!player || (player.bot && !allowBot) || !activeTypeItPlayers(room).includes(clientId) || game.results.get(clientId)?.finished) return false
+  const next = String(value ?? '')
+  const current = game.inputs.get(clientId) || ''
+  if (next.length > game.phrase.length || /[\u0000-\u001f\u007f]/.test(next)) return false
+  if (!(next.length <= current.length || next.length === current.length + 1)) return false
+  game.inputs.set(clientId, next)
+  if (next.length === game.phrase.length) {
+    game.results.set(clientId, typeItResult(game.phrase, next, Date.now(), game.roundStartedAt))
+  }
+  broadcastRoom(room, 'game_state')
+  if (typeItAllFinished(room)) resolveTypeItRound(room)
+  return true
+}
+
+function resolveTypeItRound(room) {
+  const game = room.game
+  if (!game || game.id !== 'type_it' || game.phase !== 'typing') return
+  clearGameTimer(room)
+  const players = activeTypeItPlayers(room)
+  const incomplete = players.filter((playerId) => !game.results.get(playerId)?.finished)
+  if (incomplete.length) {
+    game.roundEliminatedIds = incomplete
+  } else if (players.length) {
+    const loser = [...players].sort((left, right) => {
+      const leftResult = game.results.get(left)
+      const rightResult = game.results.get(right)
+      return leftResult.accuracy - rightResult.accuracy
+        || rightResult.speedMs - leftResult.speedMs
+        || left.localeCompare(right)
+    })[0]
+    game.roundEliminatedIds = [loser]
+  }
+  game.eliminatedIds.push(...game.roundEliminatedIds.filter((playerId) => !game.eliminatedIds.includes(playerId)))
+  game.phase = 'round_result'
+  game.phaseEndsAt = Date.now() + TYPE_IT_RESULT_MS
+  broadcastRoom(room, 'game_state')
+  scheduleGame(room, TYPE_IT_RESULT_MS, () => {
+    const survivors = activeTypeItPlayers(room)
+    if (survivors.length <= 1 || game.round >= game.maxRounds) return completeTypeItGame(room, survivors)
+    game.round += 1
+    beginTypeItRound(room)
+  })
+}
+
+function startTypeItGame(room) {
+  const playerIds = tournamentGamePlayers(room)
+  room.game = {
+    id: 'type_it',
+    round: 1,
+    maxRounds: maxRoundsForRoom(room, 'type_it', 3),
+    phase: 'preparing',
+    phaseEndsAt: null,
+    roundLimitMs: TYPE_IT_TIME_LIMITS_MS[0],
+    roundStartedAt: null,
+    phrase: '',
+    inputs: new Map(),
+    results: new Map(),
+    eliminatedIds: [],
+    roundEliminatedIds: [],
+    winnerId: null,
+    usedPhrases: [],
+    botCorrectionIds: new Set(),
+    botRateById: new Map(playerIds.map((playerId) => [playerId, 0.78 + Math.random() * 0.36])),
+    timer: null,
+    botTimers: [],
+    playerIds,
+  }
+  broadcastRoom(room, 'game_started')
+  beginTypeItRound(room)
 }
 
 function activeAvoidSimilarPlayers(room) {
@@ -2055,6 +2292,27 @@ function removeFullWaterPlayer(room, clientId) {
   return true
 }
 
+function removeTypeItPlayer(room, clientId) {
+  const game = room.game
+  if (!game || game.id !== 'type_it') return removePlayer(room, clientId)
+  if (!removePlayer(room, clientId)) return false
+  game.playerIds = game.playerIds.filter((playerId) => playerId !== clientId)
+  game.eliminatedIds = game.eliminatedIds.filter((playerId) => playerId !== clientId)
+  game.roundEliminatedIds = game.roundEliminatedIds.filter((playerId) => playerId !== clientId)
+  game.inputs.delete(clientId)
+  game.results.delete(clientId)
+  game.botCorrectionIds.delete(clientId)
+  game.botRateById.delete(clientId)
+  const survivors = activeTypeItPlayers(room)
+  if (game.phase === 'complete' || survivors.length <= 1) {
+    completeTypeItGame(room, survivors)
+    return true
+  }
+  if (game.phase === 'typing' && typeItAllFinished(room)) resolveTypeItRound(room)
+  else broadcastRoom(room, 'game_state')
+  return true
+}
+
 function removeGamePlayer(room, clientId) {
   if (room.game?.id === 'reaction_time') return removeReactionPlayer(room, clientId)
   if (room.game?.id === 'guess_the_time') return removeGuessTimePlayer(room, clientId)
@@ -2062,6 +2320,7 @@ function removeGamePlayer(room, clientId) {
   if (room.game?.id === 'avoid_similar_answer') return removeAvoidSimilarPlayer(room, clientId)
   if (room.game?.id === 'impostor_color') return removeImpostorColorPlayer(room, clientId)
   if (room.game?.id === 'full_water') return removeFullWaterPlayer(room, clientId)
+  if (room.game?.id === 'type_it') return removeTypeItPlayer(room, clientId)
   return removePlayer(room, clientId)
 }
 
@@ -2294,6 +2553,13 @@ wss.on('connection', (socket) => {
       if (room.game?.id !== 'word_memory_challenge') return reject(socket, 'Word Memory Challenge is not active.')
       if (!submitWordMemoryAnswer(room, clientId, message.answer)) {
         return reject(socket, 'Enter letters only, then lock your answer.')
+      }
+      return
+    }
+    if (message.type === 'type_it_input') {
+      if (room.game?.id !== 'type_it') return reject(socket, 'Type It is not active.')
+      if (!updateTypeItInput(room, clientId, message.value)) {
+        return reject(socket, 'Type one character at a time, including spaces, while the round is active.')
       }
       return
     }

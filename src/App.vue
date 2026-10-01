@@ -17,6 +17,9 @@ const fullWaterBottleReturning = ref(false)
 const guessInput = ref('')
 const wordMemoryInput = ref('')
 const avoidSimilarInput = ref('')
+const typeItInput = ref('')
+const typeItInputRef = ref(null)
+const typeItInputHydrated = ref(false)
 const reactionClockNow = ref(Date.now())
 const reactionServerClockOffset = ref(0)
 const showReactionMenu = ref(false)
@@ -55,7 +58,7 @@ const gameCatalogs = {
   'Free For All': freeForAllCatalog,
   'For Fun': forFunCatalog,
 }
-const playableGameIds = new Set(['reaction_time', 'guess_the_time', 'impostor_color', 'word_memory_challenge', 'avoid_similar_answer', 'full_water'])
+const playableGameIds = new Set(['reaction_time', 'guess_the_time', 'impostor_color', 'word_memory_challenge', 'avoid_similar_answer', 'full_water', 'type_it'])
 
 const playerCount = computed(
   () => teamOne.value.filter(Boolean).length + teamTwo.value.filter(Boolean).length,
@@ -155,6 +158,50 @@ const wordMemoryGame = computed(() => reactionGame.value?.id === 'word_memory_ch
 const avoidSimilarGame = computed(() => reactionGame.value?.id === 'avoid_similar_answer' ? reactionGame.value : null)
 const impostorColorGame = computed(() => reactionGame.value?.id === 'impostor_color' ? reactionGame.value : null)
 const fullWaterGame = computed(() => reactionGame.value?.id === 'full_water' ? reactionGame.value : null)
+const typeItGame = computed(() => reactionGame.value?.id === 'type_it' ? reactionGame.value : null)
+const typeItCountdown = computed(() => {
+  if (!typeItGame.value?.phaseEndsAt) return null
+  const serverNow = reactionClockNow.value + reactionServerClockOffset.value
+  return Math.max(0, Math.ceil((typeItGame.value.phaseEndsAt - serverNow) / 1_000))
+})
+const typeItCanType = computed(() =>
+  typeItGame.value?.phase === 'typing'
+  && !typeItGame.value.eliminatedIds.includes(clientId)
+  && !isTournamentSpectator.value
+  && !showReactionMenu.value
+  && !typeItGame.value.players.find((player) => player.playerId === clientId)?.finished,
+)
+const typeItRows = computed(() => {
+  const phrase = typeItGame.value?.phrase || ''
+  let offset = 0
+  const words = phrase.split(' ').map((word, index) => {
+    const item = { word, start: offset, key: `${offset}-${word}` }
+    offset += word.length + (index < phrase.split(' ').length - 1 ? 1 : 0)
+    return item
+  })
+  return Array.from({ length: Math.ceil(words.length / 5) }, (_, index) => words.slice(index * 5, index * 5 + 5))
+})
+const typeItClockStyle = computed(() => {
+  const game = typeItGame.value
+  const limit = Math.max(1, Number(game?.phase === 'preparing' ? 5_000 : game?.roundLimitMs || 1))
+  const remaining = Math.max(0, Number(typeItCountdown.value || 0) * 1_000)
+  const progress = Math.min(1, Math.max(0, 1 - remaining / limit))
+  return { '--type-it-second-angle': `${progress * 360}deg`, '--type-it-minute-angle': `${progress * 30}deg` }
+})
+const typeItStatus = computed(() => {
+  const game = typeItGame.value
+  if (!game) return ''
+  if (game.phase === 'preparing') return `Round ${game.round} starts in ${typeItCountdown.value}.`
+  if (game.phase === 'typing') return typeItGame.value.players.find((player) => player.playerId === clientId)?.finished ? 'Finished — waiting for the others.' : 'Type the phrase exactly.'
+  if (game.phase === 'round_result') return 'Round results'
+  if (game.phase === 'complete') return game.winnerName ? `${game.winnerName} wins!` : 'Type It complete!'
+  return ''
+})
+function typeItCharacterState(index) {
+  const phrase = typeItGame.value?.phrase || ''
+  if (index >= typeItInput.value.length) return 'pending'
+  return typeItInput.value[index] === phrase[index] ? 'correct' : 'incorrect'
+}
 const fullWaterBottleVisible = computed(() => {
   const phase = fullWaterGame.value?.phase
   return fullWaterBottleReturning.value || ['pouring', 'ready_to_finish'].includes(phase)
@@ -446,6 +493,21 @@ function applyRoomSnapshot(room, serverNow) {
   if (room.game?.id !== 'guess_the_time' || room.game.phase !== 'guessing') guessInput.value = ''
   if (room.game?.id !== 'word_memory_challenge' || room.game.phase !== 'answering') wordMemoryInput.value = ''
   if (room.game?.id !== 'avoid_similar_answer' || room.game.phase !== 'answering') avoidSimilarInput.value = ''
+  if (room.game?.id === 'type_it') {
+    const serverTypedText = room.game.players?.find((player) => player.playerId === clientId)?.typedText || ''
+    if (room.game.phase !== 'typing') {
+      typeItInput.value = serverTypedText
+      typeItInputHydrated.value = false
+    } else if (!typeItInputHydrated.value) {
+      // Once typing has begun, preserve local keystrokes until the server catches up.
+      // WebSocket snapshots can otherwise arrive between rapid key presses and erase text.
+      typeItInput.value = serverTypedText
+      typeItInputHydrated.value = true
+    }
+  } else {
+    typeItInput.value = ''
+    typeItInputHydrated.value = false
+  }
   inviteCode.value = room.code
   roomMode.value = room.mode
   roomFormat.value = room.format
@@ -480,6 +542,7 @@ function handleRoomMessage(event) {
     if (message.room.phase === 'playing' && message.room.game?.id === 'avoid_similar_answer') currentView.value = 'avoid-similar'
     if (message.room.phase === 'playing' && message.room.game?.id === 'impostor_color') currentView.value = 'impostor-color'
     if (message.room.phase === 'playing' && message.room.game?.id === 'full_water') currentView.value = 'full-water'
+    if (message.room.phase === 'playing' && message.room.game?.id === 'type_it') currentView.value = 'type-it'
     onlineError.value = message.room.phase === 'playing' ? 'Game started — waiting for gameplay.' : ''
   } else if (message.type === 'room_closed') {
     resetOnlineRoom(message.reason)
@@ -689,6 +752,15 @@ function submitWordMemoryAnswer() {
   sendRoom({ type: 'word_memory_submit', answer: normalizeWordMemoryInput(wordMemoryInput.value) })
 }
 
+function focusTypeItInput() {
+  if (typeItCanType.value) typeItInputRef.value?.focus()
+}
+
+function sendTypeItInput(event) {
+  if (!typeItCanType.value) return
+  sendRoom({ type: 'type_it_input', value: event.target.value })
+}
+
 function normalizeAvoidSimilarInput(value) {
   return String(value || '').replace(/[\u0000-\u001f\u007f]/g, '').slice(0, 80)
 }
@@ -861,6 +933,21 @@ const renderGameToText = () =>
         pouring: fullWaterPourHeld.value,
         eliminatedPlayerId: fullWaterGame.value.eliminatedPlayerId,
         players: fullWaterGame.value.players,
+      },
+    }),
+    ...(currentView.value === 'type-it' && typeItGame.value && {
+      game: {
+        id: typeItGame.value.id,
+        round: typeItGame.value.round,
+        maxRounds: typeItGame.value.maxRounds,
+        phase: typeItGame.value.phase,
+        phrase: typeItGame.value.phrase,
+        secondsRemaining: typeItCountdown.value,
+        canType: typeItCanType.value,
+        input: typeItInput.value,
+        eliminatedIds: typeItGame.value.eliminatedIds,
+        roundEliminatedIds: typeItGame.value.roundEliminatedIds,
+        players: typeItGame.value.players,
       },
     }),
   })
@@ -1343,6 +1430,77 @@ onBeforeUnmount(() => {
           <small v-if="isRankingFormat">{{ tournamentPoints(player.playerId) }} pts</small>
         </article>
       </TransitionGroup>
+    </section>
+  </main>
+
+  <main v-else-if="currentView === 'type-it' || gameInstructions?.game?.id === 'type_it'" class="reaction-page type-it-page" aria-labelledby="type-it-title">
+    <header class="reaction-page__header">
+      <button class="reaction-menu-toggle" type="button" :aria-expanded="showReactionMenu" aria-controls="type-it-game-menu" @click="toggleReactionMenu">&#9881;<span class="sr-only">Game menu</span></button>
+      <div>
+        <p class="reaction-page__eyebrow">LET'S PLAY!</p>
+        <h1 id="type-it-title">Type It</h1>
+      </div>
+      <div class="reaction-page__round-wrap">
+        <p class="reaction-page__round">Round {{ typeItGame?.round ?? 1 }} / {{ typeItGame?.maxRounds ?? 1 }}</p>
+        <p v-if="isOvertimeGame" class="reaction-page__overtime">{{ overtimeLabel }}</p>
+      </div>
+      <section v-if="showReactionMenu" id="type-it-game-menu" class="reaction-menu" aria-label="Game menu">
+        <button type="button" @click="resumeReaction">Resume</button>
+        <button type="button" @click="openReactionSettings">Settings</button>
+        <button class="reaction-menu__quit" type="button" @click="quitActiveGame">Quit</button>
+      </section>
+    </header>
+
+    <section class="type-it-field" aria-live="polite">
+      <p v-if="typeItStatus" class="type-it-field__status">{{ typeItStatus }}</p>
+      <div class="type-it-clock-wrap">
+        <div class="type-it-clock" :class="{ 'type-it-clock--running': typeItGame?.phase === 'typing' }" :style="typeItClockStyle" aria-label="Round countdown">
+          <i class="type-it-clock__hand type-it-clock__hand--minute"></i>
+          <i class="type-it-clock__hand type-it-clock__hand--second"></i>
+          <b>{{ typeItCountdown ?? 0 }}</b>
+        </div>
+      </div>
+
+      <div class="type-it-phrase" :class="{ 'type-it-phrase--active': typeItCanType }" role="group" aria-label="Typing phrase" @click="focusTypeItInput">
+        <input
+          ref="typeItInputRef"
+          v-model="typeItInput"
+          class="type-it-phrase__capture"
+          type="text"
+          autocomplete="off"
+          autocapitalize="off"
+          spellcheck="false"
+          :maxlength="typeItGame?.phrase?.length || 0"
+          :disabled="!typeItCanType"
+          aria-label="Type the phrase exactly"
+          @input="sendTypeItInput"
+        />
+        <div v-for="(row, rowIndex) in typeItRows" :key="`row-${rowIndex}`" class="type-it-phrase__row">
+          <span v-for="word in row" :key="word.key" class="type-it-phrase__word">
+            <span v-for="(character, index) in word.word" :key="`${word.start}-${index}`" class="type-it-phrase__character" :class="`type-it-phrase__character--${typeItCharacterState(word.start + index)}`">{{ character }}</span>
+          </span>
+        </div>
+      </div>
+
+      <p v-if="typeItCanType" class="type-it-field__hint">Tap the phrase and type. Spaces, case, and punctuation count.</p>
+
+      <Transition name="type-it-results">
+        <section v-if="typeItGame?.phase === 'round_result'" class="type-it-results" aria-label="Round results">
+          <article v-for="player in typeItGame?.players || []" :key="player.playerId" class="type-it-results__name" :class="{ 'type-it-results__name--out': player.eliminatedThisRound }">
+            <strong>{{ player.playerName }}</strong>
+            <small>{{ player.eliminatedThisRound ? 'Out' : 'Safe' }} · {{ player.accuracy?.toFixed?.(2) ?? '0.00' }}% · {{ player.speedSeconds?.toFixed?.(2) ?? '—' }}s</small>
+          </article>
+        </section>
+      </Transition>
+
+      <section class="type-it-players" aria-label="Player typing status">
+        <article v-for="player in typeItGame?.players || []" :key="player.playerId" class="type-it-player" :class="{ 'type-it-player--out': player.eliminated, 'type-it-player--finished': player.finished && !player.eliminated }">
+          <strong>{{ player.playerName }}</strong>
+          <span v-if="['round_result', 'complete'].includes(typeItGame?.phase)">{{ player.eliminatedThisRound || player.eliminated ? 'Out' : 'Safe' }}<small>{{ player.accuracy?.toFixed?.(2) ?? '0.00' }}% · {{ player.speedSeconds?.toFixed?.(2) ?? '—' }}s</small></span>
+          <span v-else-if="player.finished">Finished</span>
+          <span v-else>{{ player.typedLength }} / {{ typeItGame?.phrase?.length || 0 }}</span>
+        </article>
+      </section>
     </section>
   </main>
 
