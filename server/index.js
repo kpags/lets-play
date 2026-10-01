@@ -30,6 +30,12 @@ const IMPOSTOR_COLOR_PICK_MS = 5_000
 const IMPOSTOR_COLOR_WARNING_MS = 2_000
 const IMPOSTOR_COLOR_RETURN_MS = 500
 const IMPOSTOR_COLOR_FAREWELL_MS = 3_000
+const IMPOSTOR_COLOR_SHAKE_SOUNDS = ['bottle_shake_one', 'bottle_shake_two']
+const TOURNAMENT_FINISH_SOUNDS = {
+  eliminationWinner: 'elimination_finish_with_winner',
+  eliminationNoWinner: ['elimination_finish_without_winner_1', 'elimination_finish_without_winner_2'],
+  ranking: 'ranking_podium_finish',
+}
 const WORD_MEMORY_ROUND_INTRO_MS = 3_000
 const WORD_MEMORY_WORD_MS = 3_000
 const WORD_MEMORY_WORD_GAP_MS = 1_000
@@ -242,6 +248,7 @@ function tournamentView(room) {
     standings,
     complete: room.tournament.complete,
     completedAt: room.tournament.completedAt,
+    finishSound: room.tournament.finishSound,
     winnerId: room.tournament.winnerId,
     winnerName: playerById.get(room.tournament.winnerId)?.name || '',
   }
@@ -257,6 +264,8 @@ function impostorColorGameView(room) {
     currentPlayerId: game.currentPlayerId,
     currentPlayerName: playerById.get(game.currentPlayerId)?.name || '',
     selectedBottleIndex: game.selectedBottleIndex,
+    shakeSequence: game.shakeSequence,
+    shakeSound: game.shakeSound,
     bottles: game.bottles.map((bottle) => ({
       index: bottle.index,
       state: bottle.state,
@@ -528,6 +537,7 @@ function createTournament(room) {
     points: new Map(playerIds.map((playerId) => [playerId, 0])),
     complete: false,
     completedAt: null,
+    finishSound: null,
     winnerId: null,
   }
 }
@@ -548,9 +558,13 @@ function completeTournament(room) {
   const remaining = tournamentGamePlayers(room)
   if (tournament.format === 'Elimination') {
     tournament.winnerId = remaining.length === 1 ? remaining[0] : null
+    tournament.finishSound = tournament.winnerId
+      ? TOURNAMENT_FINISH_SOUNDS.eliminationWinner
+      : TOURNAMENT_FINISH_SOUNDS.eliminationNoWinner[Math.floor(Math.random() * TOURNAMENT_FINISH_SOUNDS.eliminationNoWinner.length)]
   } else {
     tournament.winnerId = [...tournament.playerIds]
       .sort((left, right) => (tournament.points.get(right) || 0) - (tournament.points.get(left) || 0))[0] || null
+    tournament.finishSound = TOURNAMENT_FINISH_SOUNDS.ranking
   }
 }
 
@@ -1858,6 +1872,8 @@ function pickImpostorColorBottle(room, clientId, bottleIndex) {
   bottle.state = 'shaking'
   bottle.pickedById = clientId
   game.selectedBottleIndex = bottleIndex
+  game.shakeSequence += 1
+  game.shakeSound = IMPOSTOR_COLOR_SHAKE_SOUNDS[Math.floor(Math.random() * IMPOSTOR_COLOR_SHAKE_SOUNDS.length)]
   game.phase = 'shaking'
   game.phaseEndsAt = Date.now() + IMPOSTOR_COLOR_SHAKE_MS
   broadcastRoom(room, 'game_state')
@@ -1877,6 +1893,8 @@ function startImpostorColorGame(room) {
     playerIds,
     currentPlayerId: playerIds[0] || null,
     selectedBottleIndex: null,
+    shakeSequence: 0,
+    shakeSound: null,
     eliminatedIds: [],
     afkEliminatedIds: [],
     eliminatedPlayerId: null,

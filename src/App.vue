@@ -6,7 +6,7 @@ import teamCatalog from '../data/games/team.json'
 
 const currentView = ref('landing')
 const sfxVolume = ref(75)
-const musicVolume = ref(65)
+const musicVolume = ref(10)
 const onlineStatus = ref('offline')
 const onlineError = ref('')
 const onlineRoom = ref(null)
@@ -49,6 +49,39 @@ let reconnectAttempts = 0
 let shuttingDown = false
 let reactionClockTimer = null
 let fullWaterBottleReturnTimer = null
+const tournamentFinishTimers = new Map()
+const MUSIC_TRACKS = {
+  menu: ['/musics/menu/one.mp3', '/musics/menu/two.mp3', '/musics/menu/three.mp3', '/musics/menu/four.mp3'],
+  game: ['/musics/in_game/one.mp3', '/musics/in_game/two.mp3', '/musics/in_game/three.mp3', '/musics/in_game/four.mp3'],
+}
+const SOUND_PATHS = {
+  buttonHover: '/sounds/system/button_hovered.mp3',
+  buttonClick: '/sounds/system/button_clicked.mp3',
+  playerJoined: '/sounds/system/player_joined.mp3',
+  playerLeft: '/sounds/system/player_leave.mp3',
+  playerEliminated: '/sounds/in_game/general/player_eliminated.mp3',
+  playerFinished: '/sounds/in_game/general/player_finished.mp3',
+  preparationCountdown: '/sounds/in_game/general/preparation_delay_countdown.mp3',
+  stopwatchStarts: '/sounds/in_game/guess_the_time/stopwatch_starts.mp3',
+  stopwatchStops: '/sounds/in_game/guess_the_time/stopwatch_stops.mp3',
+  reactionClick: '/sounds/in_game/reaction_time/reaction_time_click.mp3',
+  tournamentFinish: {
+    elimination_finish_with_winner: '/sounds/in_game/general/elimination_finish_with_winner.mp3',
+    elimination_finish_without_winner_1: '/sounds/in_game/general/elimination_finish_without_winner_1.mp3',
+    elimination_finish_without_winner_2: '/sounds/in_game/general/elimination_finish_without_winner_2.mp3',
+    ranking_podium_finish: '/sounds/in_game/general/ranking_podium_finish.mp3',
+  },
+  impostorBottleShake: {
+    bottle_shake_one: '/sounds/in_game/impostor_color/bottle_shake_one.mp3',
+    bottle_shake_two: '/sounds/in_game/impostor_color/bottle_shake_two.mp3',
+  },
+}
+const musicQueues = { menu: [], game: [] }
+let activeMusic = null
+let activeMusicKind = ''
+let audioUnlocked = false
+let queuedSfx = Promise.resolve()
+let lastPreparationSoundKey = ''
 const menuItems = [
   { label: 'Play', action: () => createOnlineRoom() },
   { label: 'Invite Code', action: () => openInviteDialog() },
@@ -124,12 +157,21 @@ const noEliminationWinner = computed(() =>
 )
 const rankingPodiumGroups = computed(() => {
   const standings = onlineRoom.value?.tournament?.standings || []
-  return [
-    { title: 'Winners Podium', players: standings.slice(0, 3) },
-    { title: 'Almost Winners Podium', players: standings.slice(3, 5) },
-    { title: 'NT Podium', players: standings.slice(5, 8) },
-    { title: 'ROFL Podium', players: standings.slice(8, 10) },
+  const groups = [
+    { title: 'Winners Podium', players: [] },
+    { title: 'Almost Winners Podium', players: [] },
+    { title: 'NT Podium', players: [] },
+    { title: 'ROFL Podium', players: [] },
   ]
+  let previousPoints = null
+  let rank = 0
+  standings.forEach((player, index) => {
+    if (index === 0 || player.points !== previousPoints) rank = index + 1
+    previousPoints = player.points
+    const groupIndex = rank <= 3 ? 0 : rank <= 5 ? 1 : rank <= 8 ? 2 : rank <= 10 ? 3 : -1
+    if (groupIndex >= 0) groups[groupIndex].players.push({ ...player, rank })
+  })
+  return groups
 })
 const rankingPodiumStage = computed(() => Math.min(4, Math.floor(podiumElapsed.value / 1_500) + 1))
 const podiumExitAvailable = computed(() => {
@@ -197,6 +239,230 @@ const typeItSpectatorProgress = computed(() => {
   if (!player) return ''
   return `${player.typedLength} / ${typeItGame.value?.phrase?.length || 0}`
 })
+
+function shuffleTracks(tracks) {
+  const shuffled = [...tracks]
+  for (let index = shuffled.length - 1; index > 0; index -= 1) {
+    const swapIndex = Math.floor(Math.random() * (index + 1))
+    ;[shuffled[index], shuffled[swapIndex]] = [shuffled[swapIndex], shuffled[index]]
+  }
+  return shuffled
+}
+
+function nextMusicTrack(kind) {
+  if (!musicQueues[kind].length) musicQueues[kind] = shuffleTracks(MUSIC_TRACKS[kind])
+  return musicQueues[kind].shift()
+}
+
+function desiredMusicKind() {
+  if (currentView.value === 'landing' || currentView.value === 'settings' || roomIsLobby.value) return 'menu'
+  return onlineRoom.value ? 'game' : 'menu'
+}
+
+function musicLevel(kind) {
+  const requested = Math.max(0, Math.min(100, Number(musicVolume.value) || 0)) / 100
+  return kind === 'game' ? Math.min(requested, 0.05) : requested
+}
+
+function updateMusicVolume() {
+  if (activeMusic) activeMusic.volume = musicLevel(activeMusicKind)
+}
+
+function attemptPlay(audio) {
+  const playback = audio.play()
+  if (playback?.catch) playback.catch(() => {})
+}
+
+function syncMusic() {
+  if (!audioUnlocked) return
+  const kind = desiredMusicKind()
+  if (activeMusic && activeMusicKind === kind) {
+    updateMusicVolume()
+    if (activeMusic.paused) attemptPlay(activeMusic)
+    return
+  }
+  if (activeMusic) {
+    activeMusic.pause()
+    activeMusic.currentTime = 0
+  }
+  const music = new Audio(nextMusicTrack(kind))
+  music.loop = false
+  music.volume = musicLevel(kind)
+  music.addEventListener('ended', () => {
+    if (activeMusic !== music) return
+    activeMusic = null
+    activeMusicKind = ''
+    syncMusic()
+  })
+  activeMusic = music
+  activeMusicKind = kind
+  attemptPlay(music)
+}
+
+function unlockAudio() {
+  audioUnlocked = true
+  syncMusic()
+}
+
+function playSfx(path) {
+  if (!audioUnlocked || sfxVolume.value <= 0) return
+  const sound = new Audio(path)
+  sound.volume = Math.max(0, Math.min(100, Number(sfxVolume.value) || 0)) / 100
+  attemptPlay(sound)
+}
+
+function queueSfx(path) {
+  queuedSfx = queuedSfx.catch(() => {}).then(() => new Promise((resolve) => {
+    if (!audioUnlocked || sfxVolume.value <= 0) {
+      resolve()
+      return
+    }
+    const sound = new Audio(path)
+    sound.volume = Math.max(0, Math.min(100, Number(sfxVolume.value) || 0)) / 100
+    const done = () => {
+      sound.removeEventListener('ended', done)
+      sound.removeEventListener('error', done)
+      resolve()
+    }
+    sound.addEventListener('ended', done, { once: true })
+    sound.addEventListener('error', done, { once: true })
+    const playback = sound.play()
+    if (playback?.catch) playback.catch(done)
+  }))
+}
+
+function isMenuAudioPage() {
+  return currentView.value === 'landing' || currentView.value === 'settings' || roomIsLobby.value
+}
+
+function menuButtonFromEvent(event) {
+  const button = event.target instanceof Element ? event.target.closest('button') : null
+  return button && !button.disabled && isMenuAudioPage() ? button : null
+}
+
+function handleMenuButtonHover(event) {
+  const button = menuButtonFromEvent(event)
+  if (!button || button.contains(event.relatedTarget)) return
+  playSfx(SOUND_PATHS.buttonHover)
+}
+
+function handleMenuButtonClick(event) {
+  if (!menuButtonFromEvent(event)) return
+  unlockAudio()
+  playSfx(SOUND_PATHS.buttonClick)
+}
+
+function roomPlayersById(room) {
+  return new Map(Object.values(room?.slots || {}).flat().filter(Boolean).map((player) => [player.id, player]))
+}
+
+function playNewSetItems(previous = [], next = [], path, queued = false) {
+  const previousIds = new Set(previous)
+  next.filter((id) => !previousIds.has(id)).forEach(() => (queued ? queueSfx(path) : playSfx(path)))
+}
+
+function tournamentFinishSoundDelay(soundId) {
+  if (soundId === 'elimination_finish_with_winner') return 1_500
+  if (soundId === 'ranking_podium_finish') return 4_500
+  return 0
+}
+
+function clearTournamentFinishSounds() {
+  tournamentFinishTimers.forEach((timer) => window.clearTimeout(timer))
+  tournamentFinishTimers.clear()
+}
+
+function scheduleTournamentFinishSound(room) {
+  const tournament = room?.tournament
+  const path = SOUND_PATHS.tournamentFinish[tournament?.finishSound]
+  if (!tournament?.complete || !tournament.completedAt || !path) return
+  const key = `${room.code}:${tournament.completedAt}:${tournament.finishSound}`
+  if (tournamentFinishTimers.has(key)) return
+  const serverNow = Date.now() + reactionServerClockOffset.value
+  const delay = Math.max(0, tournament.completedAt + tournamentFinishSoundDelay(tournament.finishSound) - serverNow)
+  const timer = window.setTimeout(() => {
+    tournamentFinishTimers.delete(key)
+    const activeTournament = onlineRoom.value?.tournament
+    if (
+      onlineRoom.value?.code === room.code
+      && activeTournament?.completedAt === tournament.completedAt
+      && activeTournament?.finishSound === tournament.finishSound
+    ) playSfx(path)
+  }, delay)
+  tournamentFinishTimers.set(key, timer)
+}
+
+function syncGameSounds(previousGame, nextGame) {
+  if (!previousGame || !nextGame || previousGame.id !== nextGame.id) return
+  playNewSetItems(previousGame.eliminatedIds, nextGame.eliminatedIds, SOUND_PATHS.playerEliminated, true)
+  if (nextGame.id === 'guess_the_time') {
+    if (previousGame.phase !== 'running' && nextGame.phase === 'running') playSfx(SOUND_PATHS.stopwatchStarts)
+    if (previousGame.phase === 'running' && nextGame.phase !== 'running') playSfx(SOUND_PATHS.stopwatchStops)
+    playNewSetItems(previousGame.guessedPlayerIds, nextGame.guessedPlayerIds, SOUND_PATHS.playerFinished, true)
+  }
+  if (nextGame.id === 'word_memory_challenge' || nextGame.id === 'avoid_similar_answer') {
+    playNewSetItems(previousGame.answeredPlayerIds, nextGame.answeredPlayerIds, SOUND_PATHS.playerFinished, true)
+  }
+  if (nextGame.id === 'type_it') {
+    const previousFinished = previousGame.players?.filter((player) => player.finished).map((player) => player.playerId) || []
+    const nextFinished = nextGame.players?.filter((player) => player.finished).map((player) => player.playerId) || []
+    playNewSetItems(previousFinished, nextFinished, SOUND_PATHS.playerFinished, true)
+  }
+  if (nextGame.id === 'full_water' && nextGame.hasPoured && (!previousGame.hasPoured || previousGame.currentPlayerId !== nextGame.currentPlayerId)) {
+    queueSfx(SOUND_PATHS.playerFinished)
+  }
+  if (nextGame.id === 'impostor_color') {
+    const hasNewShake = nextGame.phase === 'shaking'
+      && (previousGame.phase !== 'shaking' || previousGame.shakeSequence !== nextGame.shakeSequence)
+    const shakePath = SOUND_PATHS.impostorBottleShake[nextGame.shakeSound]
+    if (hasNewShake && shakePath) playSfx(shakePath)
+    const previousRevealed = previousGame.bottles?.filter((bottle) => bottle.state === 'revealed').map((bottle) => bottle.index) || []
+    const nextRevealed = nextGame.bottles?.filter((bottle) => bottle.state === 'revealed').map((bottle) => bottle.index) || []
+    playNewSetItems(previousRevealed, nextRevealed, SOUND_PATHS.playerFinished, true)
+  }
+}
+
+function syncRoomSounds(previousRoom, nextRoom) {
+  if (!previousRoom || previousRoom.code !== nextRoom?.code) return
+  const previousPlayers = roomPlayersById(previousRoom)
+  const nextPlayers = roomPlayersById(nextRoom)
+  nextPlayers.forEach((_, playerId) => {
+    if (!previousPlayers.has(playerId)) queueSfx(SOUND_PATHS.playerJoined)
+  })
+  previousPlayers.forEach((_, playerId) => {
+    if (!nextPlayers.has(playerId)) queueSfx(SOUND_PATHS.playerLeft)
+  })
+  syncGameSounds(previousRoom.game, nextRoom.game)
+  if (!previousRoom.tournament?.complete && nextRoom.tournament?.complete) scheduleTournamentFinishSound(nextRoom)
+}
+
+function preparationSoundState() {
+  const game = reactionGame.value
+  if (!game?.phaseEndsAt) return null
+  const preparationPhases = {
+    reaction_time: ['preparing'],
+    guess_the_time: ['preparing'],
+    word_memory_challenge: ['round_intro', 'be_ready'],
+    avoid_similar_answer: ['round_intro'],
+    full_water: ['round_intro'],
+    type_it: ['preparing'],
+  }
+  if (!preparationPhases[game.id]?.includes(game.phase)) return null
+  const serverNow = reactionClockNow.value + reactionServerClockOffset.value
+  const seconds = Math.max(0, Math.ceil((game.phaseEndsAt - serverNow) / 1_000))
+  return seconds > 0 ? `${game.id}:${game.round || 0}:${game.phaseEndsAt}:${seconds}` : null
+}
+
+function syncPreparationCountdownSound() {
+  const key = preparationSoundState()
+  if (!key) {
+    lastPreparationSoundKey = ''
+    return
+  }
+  if (key === lastPreparationSoundKey) return
+  lastPreparationSoundKey = key
+  playSfx(SOUND_PATHS.preparationCountdown)
+}
 const typeItShowsProgressCaret = computed(() =>
   typeItGame.value?.phase === 'typing' && (typeItCanType.value || typeItIsSpectating.value),
 )
@@ -517,6 +783,7 @@ function prepareFullWaterBottleReturn(playerId) {
 function applyRoomSnapshot(room, serverNow) {
   const previousGame = reactionGame.value
   const nextGame = room.game
+  syncRoomSounds(onlineRoom.value, room)
   const fullWaterTurnEnded = previousGame?.id === 'full_water'
     && ['pouring', 'ready_to_finish'].includes(previousGame.phase)
     && nextGame?.id === 'full_water'
@@ -568,6 +835,7 @@ function applyRoomSnapshot(room, serverNow) {
 
 function resetOnlineRoom(reason = '') {
   window.clearTimeout(fullWaterBottleReturnTimer)
+  clearTournamentFinishSounds()
   fullWaterBottleReturning.value = false
   onlineRoom.value = null
   reactionGame.value = null
@@ -590,6 +858,7 @@ function handleRoomMessage(event) {
     if (message.room.phase === 'playing' && message.room.game?.id === 'type_it') currentView.value = 'type-it'
     onlineError.value = message.room.phase === 'playing' ? 'Game started — waiting for gameplay.' : ''
   } else if (message.type === 'room_closed') {
+    if (/removed by the host/i.test(message.reason || '')) playSfx(SOUND_PATHS.playerLeft)
     resetOnlineRoom(message.reason)
     currentView.value = 'landing'
   } else if (message.type === 'action_rejected' || message.type === 'error') {
@@ -772,6 +1041,8 @@ function finishFullWaterTurn() {
 
 const recordReaction = () => {
   if (!reactionTargetInteractive.value) return
+  unlockAudio()
+  playSfx(SOUND_PATHS.reactionClick)
   reactionClickSubmitted.value = true
   sendRoom({ type: 'reaction_click' })
 }
@@ -819,6 +1090,9 @@ watch(typeItCanType, (canType, wasTyping) => {
   })
 })
 
+watch([currentView, () => onlineRoom.value?.phase, musicVolume], syncMusic, { immediate: true })
+watch([reactionClockNow, () => reactionGame.value?.phaseEndsAt], syncPreparationCountdownSound)
+
 function sendTypeItInput(event) {
   if (!typeItCanType.value) return
   sendRoom({ type: 'type_it_input', value: event.target.value })
@@ -863,6 +1137,8 @@ function quitActiveGame() {
 }
 
 function exitRoom() {
+  unlockAudio()
+  playSfx(SOUND_PATHS.playerLeft)
   sendRoom({ type: 'leave_room' })
   resetOnlineRoom()
   currentView.value = 'landing'
@@ -1021,6 +1297,10 @@ onMounted(() => {
   window.advanceTime = (ms = 0) => { reactionClockNow.value += Number(ms) || 0 }
   window.addEventListener('pointerup', stopFullWaterPour)
   window.addEventListener('blur', stopFullWaterPour)
+  window.addEventListener('pointerdown', unlockAudio)
+  window.addEventListener('keydown', unlockAudio)
+  window.addEventListener('pointerover', handleMenuButtonHover)
+  window.addEventListener('click', handleMenuButtonClick, true)
   const invitedRoom = new URLSearchParams(location.search).get('room')
   if (invitedRoom) joinOnlineRoom(invitedRoom.toUpperCase())
 })
@@ -1029,9 +1309,19 @@ onBeforeUnmount(() => {
   shuttingDown = true
   window.clearTimeout(reconnectTimer)
   window.clearTimeout(fullWaterBottleReturnTimer)
+  clearTournamentFinishSounds()
   window.clearInterval(reactionClockTimer)
   window.removeEventListener('pointerup', stopFullWaterPour)
   window.removeEventListener('blur', stopFullWaterPour)
+  window.removeEventListener('pointerdown', unlockAudio)
+  window.removeEventListener('keydown', unlockAudio)
+  window.removeEventListener('pointerover', handleMenuButtonHover)
+  window.removeEventListener('click', handleMenuButtonClick, true)
+  if (activeMusic) {
+    activeMusic.pause()
+    activeMusic = null
+    activeMusicKind = ''
+  }
   roomSocket?.close()
   delete window.render_game_to_text
   delete window.advanceTime
@@ -1109,11 +1399,13 @@ onBeforeUnmount(() => {
         <h1 id="settings-title" class="visually-hidden">Sound Settings</h1>
         <div class="sound-control">
           <label for="sfx-volume">SFX</label>
+          <output class="sound-control__value" for="sfx-volume" aria-live="polite">{{ sfxVolume }}%</output>
           <input id="sfx-volume" v-model.number="sfxVolume" type="range" min="0" max="100" />
         </div>
 
         <div class="sound-control">
           <label for="music-volume">Music</label>
+          <output class="sound-control__value" for="music-volume" aria-live="polite">{{ musicVolume }}%</output>
           <input id="music-volume" v-model.number="musicVolume" type="range" min="0" max="100" />
         </div>
       </div>
