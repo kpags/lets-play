@@ -1,1 +1,14 @@
-[]
+[
+    {
+        "id": "monster_escape_office",
+        "name": "Monster Escape: Office",
+        "description": "Escape the office from rampaging monsters by taking the elevator or stairs. Flashlight is the only weapon.",
+        "rounds": 3,
+        "rounds_to_win": 2,
+        "minimum_players": 3,
+        "win_condition": {
+            "escapees": "At least 50% (rounded down) of escapees escaped",
+            "monsters": "All escapees are devoured"
+        }
+    }
+]
