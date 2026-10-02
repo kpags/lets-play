@@ -1983,7 +1983,7 @@ button {
 
 .full-water-container__rim {
   position: absolute;
-  z-index: 3;
+  z-index: 4;
   top: 1%;
   left: 8%;
   width: 84%;

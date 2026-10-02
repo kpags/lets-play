@@ -69,6 +69,10 @@ const SOUND_PATHS = {
   stopwatchStarts: '/sounds/in_game/guess_the_time/stopwatch_starts.mp3',
   stopwatchStops: '/sounds/in_game/guess_the_time/stopwatch_stops.mp3',
   reactionClick: '/sounds/in_game/reaction_time/reaction_time_click.mp3',
+  fullWaterPouring: '/sounds/in_game/full_water/pouring_water.mp3',
+  fullWaterOverflowing: '/sounds/in_game/full_water/overflowing_water.mp3',
+  typeItTyping: '/sounds/in_game/type_it/typing.mp3',
+  wordMemoryWordShown: '/sounds/in_game/word_memory_challenge/word_shown.mp3',
   tournamentFinish: {
     elimination_finish_with_winner: '/sounds/in_game/general/elimination_finish_with_winner.mp3',
     elimination_finish_without_winner_1: '/sounds/in_game/general/elimination_finish_without_winner_1.mp3',
@@ -92,6 +96,7 @@ let rankingPodiumMusicPaused = false
 let audioUnlocked = false
 let queuedSfx = Promise.resolve()
 let lastPreparationSoundKey = ''
+let activeFullWaterPourSound = null
 const menuItems = [
   { label: 'Play', action: () => createOnlineRoom() },
   { label: 'Invite Code', action: () => openInviteDialog() },
@@ -316,6 +321,7 @@ function syncMusic() {
 function unlockAudio() {
   audioUnlocked = true
   syncMusic()
+  syncFullWaterPourSound()
 }
 
 function playSfx(path) {
@@ -324,6 +330,37 @@ function playSfx(path) {
   sound.volume = sfxPlaybackVolume(path)
   attemptPlay(sound)
   return sound
+}
+
+function stopFullWaterPourSound() {
+  if (!activeFullWaterPourSound) return
+  activeFullWaterPourSound.pause()
+  activeFullWaterPourSound.currentTime = 0
+  activeFullWaterPourSound = null
+}
+
+function syncFullWaterPourSound() {
+  const shouldPlay = fullWaterGame.value?.phase === 'pouring'
+    && Boolean(fullWaterPourArc.value)
+    && currentView.value === 'full-water'
+    && audioUnlocked
+    && sfxVolume.value > 0
+  if (!shouldPlay) {
+    stopFullWaterPourSound()
+    return
+  }
+  if (activeFullWaterPourSound) {
+    activeFullWaterPourSound.volume = sfxPlaybackVolume(SOUND_PATHS.fullWaterPouring)
+    return
+  }
+  const sound = new Audio(SOUND_PATHS.fullWaterPouring)
+  sound.loop = true
+  sound.volume = sfxPlaybackVolume(SOUND_PATHS.fullWaterPouring)
+  sound.addEventListener('error', () => {
+    if (activeFullWaterPourSound === sound) activeFullWaterPourSound = null
+  }, { once: true })
+  activeFullWaterPourSound = sound
+  attemptPlay(sound)
 }
 
 function queueSfx(path) {
@@ -451,13 +488,29 @@ function syncGameSounds(previousGame, nextGame) {
   if (nextGame.id === 'word_memory_challenge' || nextGame.id === 'avoid_similar_answer') {
     playOneForNewSetItems(previousGame.answeredPlayerIds, nextGame.answeredPlayerIds, SOUND_PATHS.playerFinished)
   }
+  if (nextGame.id === 'word_memory_challenge') {
+    const hasNewShownWord = nextGame.phase === 'showing_word'
+      && (previousGame.phase !== 'showing_word' || previousGame.wordIndex !== nextGame.wordIndex)
+    if (hasNewShownWord) playSfx(SOUND_PATHS.wordMemoryWordShown)
+  }
   if (nextGame.id === 'type_it') {
     const previousFinished = previousGame.players?.filter((player) => player.finished).map((player) => player.playerId) || []
     const nextFinished = nextGame.players?.filter((player) => player.finished).map((player) => player.playerId) || []
     playOneForNewSetItems(previousFinished, nextFinished, SOUND_PATHS.playerFinished)
+    const selectedPlayerId = typeItSpectatedPlayerId.value
+    if (isTypeItSpectator.value && selectedPlayerId && nextGame.phase === 'typing') {
+      const previousTyped = previousGame.players?.find((player) => player.playerId === selectedPlayerId)?.typedText || ''
+      const nextTyped = nextGame.players?.find((player) => player.playerId === selectedPlayerId)?.typedText || ''
+      if (nextTyped.startsWith(previousTyped)) {
+        Array.from(nextTyped.slice(previousTyped.length))
+          .filter((character) => /[A-Za-z]/.test(character))
+          .forEach(() => playSfx(SOUND_PATHS.typeItTyping))
+      }
+    }
   }
-  if (nextGame.id === 'full_water' && previousGame.phase !== 'settling' && nextGame.phase === 'settling') {
-    playSfx(SOUND_PATHS.playerFinished)
+  if (nextGame.id === 'full_water') {
+    if (previousGame.phase !== 'settling' && nextGame.phase === 'settling') playSfx(SOUND_PATHS.playerFinished)
+    if (previousGame.phase !== 'overflowing' && nextGame.phase === 'overflowing') playSfx(SOUND_PATHS.fullWaterOverflowing)
   }
   if (nextGame.id === 'impostor_color') {
     const hasNewShake = nextGame.phase === 'shaking'
@@ -886,6 +939,7 @@ function applyRoomSnapshot(room, serverNow) {
 function resetOnlineRoom(reason = '') {
   window.clearTimeout(fullWaterBottleReturnTimer)
   clearTournamentFinishSounds()
+  stopFullWaterPourSound()
   rankingPodiumMusicPaused = false
   fullWaterBottleReturning.value = false
   onlineRoom.value = null
@@ -1082,11 +1136,13 @@ function startFullWaterPour() {
 function stopFullWaterPour() {
   if (!fullWaterPourHeld.value) return
   fullWaterPourHeld.value = false
+  stopFullWaterPourSound()
   sendRoom({ type: 'full_water_pour_stop' })
 }
 
 function finishFullWaterTurn() {
   if (!canFinishFullWaterTurn.value) return
+  stopFullWaterPourSound()
   sendRoom({ type: 'full_water_finish_turn' })
 }
 
@@ -1183,11 +1239,18 @@ watch([() => fullWaterGame.value?.phase, fullWaterDisplayedMl, currentView], () 
   nextTick(updateFullWaterPourArc)
 }, { immediate: true })
 
+watch([() => fullWaterGame.value?.phase, fullWaterPourArc, currentView, sfxVolume], syncFullWaterPourSound, { immediate: true })
+
 watch([currentView, () => onlineRoom.value?.phase, musicVolume], syncMusic, { immediate: true })
 watch([reactionClockNow, () => reactionGame.value?.phaseEndsAt], syncPreparationCountdownSound)
 
 function sendTypeItInput(event) {
   if (!typeItCanType.value) return
+  if (event.inputType === 'insertText') {
+    Array.from(event.data || '')
+      .filter((character) => /[A-Za-z]/.test(character))
+      .forEach(() => playSfx(SOUND_PATHS.typeItTyping))
+  }
   sendRoom({ type: 'type_it_input', value: event.target.value })
 }
 
@@ -1226,6 +1289,7 @@ function openReactionSettings() {
 
 function quitActiveGame() {
   showReactionMenu.value = false
+  stopFullWaterPourSound()
   sendRoom({ type: 'quit_game' })
 }
 
@@ -1405,6 +1469,7 @@ onBeforeUnmount(() => {
   window.clearTimeout(reconnectTimer)
   window.clearTimeout(fullWaterBottleReturnTimer)
   clearTournamentFinishSounds()
+  stopFullWaterPourSound()
   window.clearInterval(reactionClockTimer)
   window.removeEventListener('pointerup', stopFullWaterPour)
   window.removeEventListener('blur', stopFullWaterPour)
