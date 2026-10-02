@@ -11,7 +11,7 @@
     {
         "id": "find_the_killer",
         "name": "Find the Killer",
-        "description": "Players assigned as killers must eliminated all civilians. Civilians will do their normal tasks and can also scream for help. Police must catch all the killers.",
+        "description": "Players assigned as killers must eliminate all civilians. Civilians will do their normal tasks and can also scream for help. Police must catch all the killers.",
         "win_condition": "Eliminate all civilians as a killer OR catch all killers as police.",
         "lose_condition": "Fail to eliminate all civilians or get caught as a killer OR fail to catch all killers as police."
     }
