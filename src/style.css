@@ -2146,7 +2146,6 @@ button {
 
 .full-water-pour-arc {
   position: absolute;
-  z-index: 0;
   inset: 0;
   width: 100%;
   height: 100%;
@@ -2168,9 +2167,16 @@ button {
 }
 
 .full-water-pour-arc__body {
-  stroke: url(#full-water-pour-gradient);
+  stroke: #4fc8e9;
   stroke-width: clamp(0.38rem, 1vmin, 0.58rem);
   animation: full-water-pour-arc-reveal 220ms ease-out both;
+}
+
+.full-water-pour-arc--outer { z-index: 3; }
+
+.full-water-pour-arc--inner {
+  z-index: 1;
+  overflow: visible;
 }
 
 .full-water-pour-arc__highlight {
@@ -2208,9 +2214,9 @@ button {
 
 .full-water-bottle {
   position: absolute;
-  z-index: 1;
+  z-index: 5;
   top: -90%;
-  left: 37%;
+  left: -25%;
   display: grid;
   justify-items: center;
   width: clamp(4.5rem, 11vmin, 7rem);

@@ -1106,27 +1106,33 @@ function updateFullWaterPourArc() {
   const container = fullWaterContainerRef.value
   const cap = fullWaterBottleCapRef.value
   const glass = container?.querySelector('.full-water-container__glass')
-  if (!container || !cap || !glass) return
+  const liquid = container?.querySelector('.full-water-container__liquid')
+  if (!container || !cap || !glass || !liquid) return
 
   const containerRect = container.getBoundingClientRect()
   const capRect = cap.getBoundingClientRect()
   const glassRect = glass.getBoundingClientRect()
+  const liquidRect = liquid.getBoundingClientRect()
   if (!containerRect.width || !containerRect.height) return
 
   const startX = capRect.left + capRect.width / 2 - containerRect.left
   const startY = capRect.top + capRect.height * 0.72 - containerRect.top
-  const endX = glassRect.left + glassRect.width / 2 - containerRect.left
-  const endY = glassRect.top + glassRect.height * 0.14 - containerRect.top
-  const deltaX = endX - startX
-  const deltaY = endY - startY
-  const controlOneX = startX + deltaX * 0.62
-  const controlOneY = startY + deltaY * 0.16
-  const controlTwoX = endX - deltaX * 0.18
-  const controlTwoY = endY - deltaY * 0.38
+  const targetX = glassRect.left + glassRect.width / 2 - containerRect.left
+  const targetY = Math.max(
+    glassRect.top + 5 - containerRect.top,
+    liquidRect.top - containerRect.top,
+  )
+  const entryY = glassRect.top + 3 - containerRect.top
+  const progressToEntry = Math.min(1, Math.max(0, (entryY - startY) / Math.max(1, targetY - startY)))
+  const entryX = startX + (targetX - startX) * progressToEntry
+  const glassOffsetX = glassRect.left - containerRect.left
+  const glassOffsetY = glassRect.top - containerRect.top
 
   fullWaterPourArc.value = {
     viewBox: `0 0 ${containerRect.width} ${containerRect.height}`,
-    path: `M ${startX} ${startY} C ${controlOneX} ${controlOneY}, ${controlTwoX} ${controlTwoY}, ${endX} ${endY}`,
+    outerPath: `M ${startX} ${startY} L ${entryX} ${entryY}`,
+    innerViewBox: `0 0 ${glassRect.width} ${glassRect.height}`,
+    innerPath: `M ${entryX - glassOffsetX} ${entryY - glassOffsetY} L ${targetX - glassOffsetX} ${targetY - glassOffsetY}`,
   }
 }
 
@@ -1173,7 +1179,7 @@ watch(typeItCanType, (canType, wasTyping) => {
   })
 })
 
-watch([() => fullWaterGame.value?.phase, currentView], () => {
+watch([() => fullWaterGame.value?.phase, fullWaterDisplayedMl, currentView], () => {
   nextTick(updateFullWaterPourArc)
 }, { immediate: true })
 
@@ -2029,22 +2035,25 @@ onBeforeUnmount(() => {
           <span v-if="fullWaterGame?.phase === 'overflowing'" class="full-water-container__overflow-surface" aria-hidden="true"></span>
           <svg
             v-if="fullWaterGame?.phase === 'pouring' && fullWaterPourArc"
-            class="full-water-pour-arc"
+            class="full-water-pour-arc full-water-pour-arc--outer"
             :viewBox="fullWaterPourArc.viewBox"
             aria-hidden="true"
           >
-            <defs>
-              <linearGradient id="full-water-pour-gradient" x1="0" y1="0" x2="1" y2="1">
-                <stop offset="0%" stop-color="#c9f9ff" stop-opacity="0.78" />
-                <stop offset="48%" stop-color="#4fc8e9" />
-                <stop offset="100%" stop-color="#1e97c9" stop-opacity="0.82" />
-              </linearGradient>
-            </defs>
-            <path class="full-water-pour-arc__glow" :d="fullWaterPourArc.path" pathLength="1" />
-            <path class="full-water-pour-arc__body" :d="fullWaterPourArc.path" pathLength="1" />
-            <path class="full-water-pour-arc__highlight" :d="fullWaterPourArc.path" pathLength="1" />
+            <path class="full-water-pour-arc__glow" :d="fullWaterPourArc.outerPath" pathLength="1" />
+            <path class="full-water-pour-arc__body" :d="fullWaterPourArc.outerPath" pathLength="1" />
+            <path class="full-water-pour-arc__highlight" :d="fullWaterPourArc.outerPath" pathLength="1" />
           </svg>
           <span class="full-water-container__glass">
+            <svg
+              v-if="fullWaterGame?.phase === 'pouring' && fullWaterPourArc"
+              class="full-water-pour-arc full-water-pour-arc--inner"
+              :viewBox="fullWaterPourArc.innerViewBox"
+              aria-hidden="true"
+            >
+              <path class="full-water-pour-arc__glow" :d="fullWaterPourArc.innerPath" pathLength="1" />
+              <path class="full-water-pour-arc__body" :d="fullWaterPourArc.innerPath" pathLength="1" />
+              <path class="full-water-pour-arc__highlight" :d="fullWaterPourArc.innerPath" pathLength="1" />
+            </svg>
             <span class="full-water-container__limit-ring" aria-hidden="true"></span>
             <span class="full-water-container__liquid" :style="fullWaterFillStyle"><i></i></span>
           </span>
