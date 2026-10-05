@@ -445,6 +445,48 @@ button {
   font-weight: 800;
 }
 
+.team-games {
+  display: grid;
+  gap: 0.5rem;
+  margin-top: 1rem;
+  padding: 0.72rem;
+  border: 1px solid rgb(120 205 242 / 0.66);
+  border-radius: 0.9rem;
+  background: linear-gradient(145deg, rgb(9 84 144 / 0.38), rgb(16 44 85 / 0.28));
+  box-shadow: inset 0 1px 0 rgb(255 255 255 / 0.18);
+}
+
+.team-games__heading {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 0.5rem;
+}
+
+.team-games__heading span {
+  color: #aeeaff;
+  font-size: 0.68rem;
+  font-weight: 900;
+  letter-spacing: 0.09em;
+  text-transform: uppercase;
+}
+
+.team-games__heading strong { color: #f7fdff; font-size: 0.9rem; }
+
+.team-games__game {
+  display: grid;
+  gap: 0.24rem;
+  padding: 0.6rem;
+  border: 1px solid rgb(205 246 255 / 0.43);
+  border-radius: 0.7rem;
+  background: rgb(0 34 67 / 0.26);
+}
+
+.team-games__game strong { color: #f5fdff; font-size: 0.86rem; }
+.team-games__game p { margin: 0; color: rgb(223 247 255 / 0.86); font-size: 0.72rem; line-height: 1.35; }
+.team-games__game small { color: #c8f58f; font-size: 0.67rem; font-weight: 800; }
+.team-games__empty { margin: 0; color: #ffdda8; font-size: 0.75rem; font-weight: 700; }
+
 .room-field select:disabled,
 .room-action:disabled {
   cursor: not-allowed;
@@ -3638,6 +3680,79 @@ button {
 @media (prefers-reduced-motion: reduce) {
   .type-it-clock, .type-it-clock__hand, .type-it-phrase__character, .type-it-phrase__cursor, .type-it-results__name { transition: none; animation: none; }
   .type-it-results-enter-active, .type-it-results-leave-active { transition: none; }
+}
+
+/* Monster Escape: Office */
+.monster-escape-page { min-height: 100svh; }
+.monster-escape-score { display: flex; justify-content: flex-end; gap: 0.45rem; margin: 0.12rem 0 0; font-size: 0.78rem; font-weight: 900; }
+.monster-escape-score span:first-child { color: #1678cc; }
+.monster-escape-score span:last-child { color: #cc3a47; }
+.monster-escape { display: grid; width: min(100%, 72rem); margin: 0 auto; gap: 0.7rem; padding: 0.55rem clamp(0.65rem, 2vw, 1.25rem) 1rem; }
+.monster-escape__topline { display: flex; align-items: center; justify-content: space-between; gap: 1rem; min-height: 1.55rem; color: #063f5b; }
+.monster-escape__topline strong { font-size: clamp(0.82rem, 1.8vw, 1rem); }
+.monster-escape__topline > span { min-width: 3rem; color: #c3434e; font-size: 1.05rem; font-weight: 900; text-align: right; }
+.monster-escape-camera { position: relative; min-height: clamp(23rem, 59vh, 39rem); overflow: hidden; border: 0.22rem solid #325676; border-radius: 1.15rem; background: #0b1925; box-shadow: 0 0.8rem 2rem rgb(4 44 65 / 0.28); isolation: isolate; }
+.monster-escape-world { position: absolute; top: 50%; left: 50%; width: 1680px; height: 945px; transform-origin: center; }
+.monster-escape-map { position: absolute; inset: 0; display: block; width: 1680px; height: 945px; max-width: none; user-select: none; }
+.monster-escape-fog { position: absolute; z-index: 4; inset: 0; pointer-events: none; background: radial-gradient(circle min(37vw, 17rem) at 50% 50%, transparent 0 35%, rgb(2 8 17 / 0.29) 60%, rgb(2 8 17 / 0.91) 100%); }
+.monster-escape-locker { position: absolute; z-index: 2; width: 9.4rem; height: auto; left: 1050px; top: 771px; transform: rotate(0); transform-origin: center; filter: drop-shadow(0 0.3rem 0.25rem rgb(0 0 0 / 0.35)); }
+.monster-escape-marker { position: absolute; z-index: 2; display: grid; min-width: 1.5rem; min-height: 1.5rem; place-items: center; transform: translate(-50%, -50%); border: 1px solid rgb(255 255 255 / 0.7); border-radius: 99px; color: #fff; font-size: 0.64rem; font-weight: 900; text-shadow: 0 1px 2px #000; box-shadow: 0 0 0.75rem currentColor; }
+.monster-escape-marker--search { background: #e5a32d; color: #fff2ba; }
+.monster-escape-marker--hide { min-width: auto; padding: 0.18rem 0.35rem; background: #8267c9; color: #f7efff; }
+.monster-escape-character { position: absolute; z-index: 3; display: grid; width: 90px; height: 96px; place-items: end center; transform: translate(-50%, -82%); color: #fff; pointer-events: none; text-align: center; text-shadow: 0 2px 3px #000; }
+.monster-escape-character img { width: auto; max-width: 90px; height: 71px; object-fit: contain; filter: drop-shadow(0 0.2rem 0.22rem rgb(0 0 0 / 0.45)); }
+.monster-escape-character strong { max-width: 96px; overflow: hidden; font-size: 0.68rem; font-weight: 900; text-overflow: ellipsis; white-space: nowrap; }
+.monster-escape-character--self::after { position: absolute; bottom: 1.3rem; width: 2.9rem; height: 0.5rem; border: 2px solid #eaff67; border-radius: 50%; content: ''; filter: drop-shadow(0 0 0.35rem #c7ff2d); }
+.monster-escape-character--monster img { filter: drop-shadow(0 0.2rem 0.24rem rgb(0 0 0 / 0.7)) hue-rotate(305deg) saturate(1.35); }
+.monster-escape-character--hidden { opacity: 0.2; }
+.monster-escape-character--out { opacity: 0.36; filter: grayscale(1); }
+.monster-escape-character--blinded img { animation: monster-escape-blind-character 500ms ease-in-out infinite alternate; }
+.monster-escape-blind { position: absolute; z-index: 8; inset: 0; pointer-events: none; background: rgb(255 255 255 / 0.43); backdrop-filter: blur(7px); animation: monster-escape-blind-pop 300ms cubic-bezier(.2, 1.5, .4, 1) both; transition: opacity 1s ease; }
+.monster-escape-blind--fading { opacity: 0; }
+.monster-escape-hud { display: grid; gap: 0.55rem; padding: 0.65rem 0.8rem; border: 1px solid #92c5d7; border-radius: 0.9rem; background: rgb(247 254 255 / 0.88); color: #074b69; box-shadow: 0 0.35rem 0.85rem rgb(6 78 109 / 0.12); }
+.monster-escape-hud__identity, .monster-escape-inventory, .monster-escape-controls, .monster-escape-revive { display: flex; flex-wrap: wrap; align-items: center; gap: 0.45rem; }
+.monster-escape-hud__identity { justify-content: space-between; font-size: 0.83rem; font-weight: 800; }
+.monster-escape-role { padding: 0.24rem 0.5rem; border-radius: 99px; color: #fff; font-size: 0.72rem; letter-spacing: .04em; text-transform: uppercase; }
+.monster-escape-role--human { background: #247ece; }
+.monster-escape-role--monster { background: #c93d4e; }
+.monster-escape-health { display: inline-flex; gap: 0.18rem; }
+.monster-escape-health i { width: 1rem; height: 0.62rem; border-radius: 0.18rem; background: #e95763; box-shadow: inset 0 -0.12rem 0 rgb(118 18 31 / 0.3); }
+.monster-escape-health .monster-escape-health__bar--empty { background: #d5e1e6; box-shadow: none; }
+.monster-escape-lifting { margin: 0; color: #0b7665; font-size: 0.82rem; font-weight: 900; }
+.monster-escape-inventory { justify-content: center; }
+.monster-escape-inventory > button:not(.monster-escape-use) { position: relative; display: grid; width: 2.75rem; height: 2.75rem; place-items: center; overflow: hidden; padding: 0; border: 1px solid #85bfd4; border-radius: 0.55rem; background: #eafbff; }
+.monster-escape-inventory > button:not(.monster-escape-use):disabled { opacity: 0.65; }
+.monster-escape-inventory > button:not(.monster-escape-use).monster-escape-inventory__slot--equipped { border-color: #d99624; box-shadow: 0 0 0 0.16rem rgb(238 181 47 / 0.28); }
+.monster-escape-inventory b { position: absolute; z-index: 1; top: 0.1rem; left: 0.2rem; color: #195670; font-size: 0.6rem; }
+.monster-escape-inventory img { width: 80%; height: 80%; object-fit: contain; }
+.monster-escape-use, .monster-escape-controls button, .monster-escape-modal button, .monster-escape-revive button { border: 1px solid #438bad; border-radius: 0.55rem; background: #f8feff; color: #075273; font: inherit; font-weight: 800; cursor: pointer; }
+.monster-escape-use, .monster-escape-controls button { min-height: 2.35rem; padding: 0.35rem 0.6rem; }
+.monster-escape-controls { justify-content: center; }
+.monster-escape-controls small { color: #4d7b8f; font-size: .73rem; font-weight: 700; }
+.monster-escape-controls button:disabled, .monster-escape-use:disabled { cursor: not-allowed; opacity: .48; }
+.monster-escape-modal { position: fixed; z-index: 12; top: 50%; left: 50%; width: min(23rem, calc(100vw - 2rem)); padding: 1rem; transform: translate(-50%, -50%); border: 2px solid #559bbb; border-radius: 1rem; background: #faffff; color: #075273; text-align: center; box-shadow: 0 1rem 3rem rgb(0 37 58 / .36); }
+.monster-escape-modal h2, .monster-escape-modal p { margin: .2rem 0 .65rem; }
+.monster-escape-modal > div { display: flex; flex-wrap: wrap; justify-content: center; gap: .45rem; }
+.monster-escape-modal button, .monster-escape-revive button { padding: .45rem .65rem; }
+.monster-escape-modal--item { display: grid; justify-items: center; }
+.monster-escape-modal--item img { width: 5rem; height: 5rem; object-fit: contain; }
+.monster-escape-modal__close { position: absolute; top: .35rem; right: .45rem; width: 2rem; height: 2rem; padding: 0 !important; font-size: 1.25rem !important; }
+.monster-escape-revive { justify-content: center; padding: .55rem; border: 1px dashed #b4729c; border-radius: .7rem; background: #fff7fc; color: #82375d; font-size: .82rem; font-weight: 800; }
+@keyframes monster-escape-blind-pop { from { opacity: 0; transform: scale(.96); } to { opacity: 1; transform: scale(1); } }
+@keyframes monster-escape-blind-character { from { filter: brightness(1.1) drop-shadow(0 0 .2rem #fff); } to { filter: brightness(1.7) drop-shadow(0 0 .5rem #fff); } }
+@media (max-width: 540px) {
+  .monster-escape { padding-inline: .5rem; }
+  .monster-escape-camera { min-height: 58svh; border-radius: .75rem; }
+  .monster-escape-hud { padding: .55rem; }
+  .monster-escape-hud__identity { gap: .35rem; }
+  .monster-escape-inventory { gap: .32rem; }
+  .monster-escape-inventory > button:not(.monster-escape-use) { width: 2.35rem; height: 2.35rem; }
+  .monster-escape-use { width: 100%; }
+  .monster-escape-controls button { padding-inline: .44rem; font-size: .77rem; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .monster-escape-blind, .monster-escape-character--blinded img { animation: none; }
+  .monster-escape-blind { transition: opacity 1s linear; }
 }
 
 @media (max-width: 700px), (orientation: portrait) {

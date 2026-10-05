@@ -107,7 +107,7 @@ const gameCatalogs = {
   'Free For All': freeForAllCatalog,
   'For Fun': forFunCatalog,
 }
-const playableGameIds = new Set(['reaction_time', 'guess_the_time', 'impostor_color', 'word_memory_challenge', 'avoid_similar_answer', 'full_water', 'type_it'])
+const playableGameIds = new Set(['reaction_time', 'guess_the_time', 'impostor_color', 'word_memory_challenge', 'avoid_similar_answer', 'full_water', 'type_it', 'monster_escape_office'])
 
 const playerCount = computed(
   () => teamOne.value.filter(Boolean).length + teamTwo.value.filter(Boolean).length,
@@ -123,10 +123,11 @@ const nonBotPlayersReady = computed(() =>
 const canStartGame = computed(() => {
   if (!isRoomHost.value || !roomIsLobby.value || !nonBotPlayersReady.value) return false
   if (!gameCatalog.value.some((game) => playableGameIds.has(game.id))) return false
-  if (isTeamMode.value) return teamOne.value.some(Boolean) && teamTwo.value.some(Boolean)
+  if (isTeamMode.value) return playerCount.value >= 3 && teamOne.value.some(Boolean) && teamTwo.value.some(Boolean)
   return playerCount.value >= 2
 })
 const gameCatalog = computed(() => gameCatalogs[roomMode.value] || [])
+const teamGames = computed(() => gameCatalogs.Team.filter((game) => playableGameIds.has(game.id)))
 const selectedGameCount = computed(() => selectedGames.value.length)
 const gameChooserIsReadOnly = computed(() => !isRoomHost.value || !roomIsLobby.value)
 const isRankingFormat = computed(() => onlineRoom.value?.tournament?.format === 'Ranking')
@@ -217,6 +218,71 @@ const avoidSimilarGame = computed(() => reactionGame.value?.id === 'avoid_simila
 const impostorColorGame = computed(() => reactionGame.value?.id === 'impostor_color' ? reactionGame.value : null)
 const fullWaterGame = computed(() => reactionGame.value?.id === 'full_water' ? reactionGame.value : null)
 const typeItGame = computed(() => reactionGame.value?.id === 'type_it' ? reactionGame.value : null)
+const monsterEscapeGame = computed(() => reactionGame.value?.id === 'monster_escape_office' ? reactionGame.value : null)
+const monsterEscapeSelf = computed(() => monsterEscapeGame.value?.self || null)
+const monsterEscapeCountdown = computed(() => {
+  if (!monsterEscapeGame.value?.roundEndsAt) return null
+  const serverNow = reactionClockNow.value + reactionServerClockOffset.value
+  return Math.max(0, Math.ceil((monsterEscapeGame.value.roundEndsAt - serverNow) / 1000))
+})
+const monsterEscapeCanAct = computed(() => {
+  const self = monsterEscapeSelf.value
+  return monsterEscapeGame.value?.phase === 'active'
+    && Boolean(self)
+    && !self.devoured
+    && !self.escaped
+    && !self.grabbedById
+    && !self.searchingUntil
+    && !self.transitEndsAt
+    && !self.awaitingTransit
+    && !showReactionMenu.value
+})
+const monsterEscapeIsBlind = computed(() => Number(monsterEscapeSelf.value?.blindRemainingMs || 0) > 0)
+const monsterEscapeBlindFading = computed(() => Number(monsterEscapeSelf.value?.blindRemainingMs || 0) <= 1_000)
+const monsterEscapeWorldStyle = computed(() => {
+  const camera = monsterEscapeGame.value?.camera
+  if (!camera) return {}
+  return { transform: `translate(-${camera.x}px, -${camera.y}px)` }
+})
+const monsterEscapeStatus = computed(() => {
+  const game = monsterEscapeGame.value
+  const self = monsterEscapeSelf.value
+  if (!game) return ''
+  if (game.phase === 'round_intro') return `Round ${game.round} begins in ${monsterEscapeCountdown.value}.`
+  if (game.phase === 'round_result') return `${game.roundWinnerRole === 'human' ? 'Blue Team' : 'Red Team'} wins the round. ${game.roundReason}`
+  if (game.phase === 'complete') return `${game.matchWinnerRole === 'human' ? 'Blue Team — Humans' : 'Red Team — Monsters'} win the match!`
+  if (self?.devoured) return 'You were devoured. Spectating your team.'
+  if (self?.escaped) return 'You escaped. Spectating your team.'
+  if (monsterEscapeIsBlind.value) return 'Blinded — you cannot move or attack.'
+  if (Number(self?.freezeRemainingMs || 0) > 0) return 'Frozen — leave this floor once you thaw.'
+  if (self?.grabbedById) return 'Grabbed! Wait for help.'
+  if (Number(self?.searchRemainingMs || 0) > 0) return 'Searching…'
+  if (Number(self?.transitRemainingMs || 0) > 0) return 'Travelling between floors…'
+  if (self?.hiddenSpotId) return Number(self?.hideRemainingMs || 0) <= 3_000 ? 'Hidden — leave soon!' : 'Hidden.'
+  return self?.role === 'human' ? 'Find supplies, clear the exit, then escape.' : 'Hunt the humans before they escape.'
+})
+const monsterEscapeItemDefinitions = {
+  first_aid_kit: { label: 'First aid', effect: 'Restore up to three health bars.', asset: 'first_aid.png' },
+  flashlight: { label: 'Flashlight', effect: 'Blind a visible monster for 5 seconds.', asset: 'flashlight.png' },
+  lifter: { label: 'Lifter', effect: 'Reduce locker lifting to 5 seconds.', asset: 'lifter.png' },
+  life_injector: { label: 'Life injector', effect: 'Revive one devoured teammate.', asset: 'life_injector.png' },
+  adrenaline_shot: { label: 'Adrenaline', effect: 'Move 50% faster for 10 seconds.', asset: 'adrenaline_shot.png' },
+  sense_booster: { label: 'Sense booster', effect: 'See through the darkness for 30 seconds.', asset: 'sense_booster.png' },
+}
+const monsterEscapeItemReveal = computed(() => {
+  const self = monsterEscapeSelf.value
+  if (!self?.lastFoundItem || Number(self.itemRevealUntil || 0) <= reactionClockNow.value + reactionServerClockOffset.value) return null
+  return monsterEscapeItemDefinitions[self.lastFoundItem] || null
+})
+const monsterEscapeReviveTargets = computed(() => (monsterEscapeGame.value?.players || [])
+  .filter((player) => player.role === 'human' && player.devoured))
+const monsterEscapeCharacterPath = (player) => {
+  if (!player?.model) return ''
+  const side = player.role === 'human' ? 'humans' : 'monsters'
+  const motion = player.moving ? (player.running ? 'run.gif' : 'walk.gif') : 'idle.png'
+  return `/games/team/monster_escape_office/characters/${side}/${player.model}/${motion}`
+}
+const monsterEscapeItemPath = (item) => `/games/team/monster_escape_office/misc/items/searchable_usable/${item.asset}`
 const isTypeItSpectator = computed(() =>
   onlineRoom.value?.tournament?.format === 'Elimination'
   && (onlineRoom.value.tournament.eliminatedIds.includes(clientId)
@@ -961,6 +1027,7 @@ function handleRoomMessage(event) {
     if (message.room.phase === 'playing' && message.room.game?.id === 'impostor_color') currentView.value = 'impostor-color'
     if (message.room.phase === 'playing' && message.room.game?.id === 'full_water') currentView.value = 'full-water'
     if (message.room.phase === 'playing' && message.room.game?.id === 'type_it') currentView.value = 'type-it'
+    if (message.room.phase === 'playing' && message.room.game?.id === 'monster_escape_office') currentView.value = 'monster-escape'
     onlineError.value = message.room.phase === 'playing' ? 'Game started — waiting for gameplay.' : ''
   } else if (message.type === 'room_closed') {
     if (/removed by the host/i.test(message.reason || '')) playSfx(SOUND_PATHS.playerLeft)
@@ -1047,7 +1114,7 @@ async function joinOnlineRoom(code, fromInviteDialog = false) {
 }
 
 function updateRoomSettings() {
-  if (roomMode.value === 'For Fun') {
+  if (roomMode.value === 'For Fun' || roomMode.value === 'Team') {
     if (maxGames.value !== '1') lastStandardMaxGames.value = maxGames.value
     maxGames.value = '1'
   } else if (maxGames.value === '1') {
@@ -1127,6 +1194,54 @@ const kickPlayer = (player) => sendRoom({ type: 'kick_player', playerId: player.
 const closeInstructions = () => sendRoom({ type: 'close_instructions' })
 const skipIntermission = () => sendRoom({ type: 'skip_intermission' })
 const pickImpostorBottle = (bottleIndex) => sendRoom({ type: 'impostor_color_pick', bottleIndex })
+const monsterEscapeInteract = (direction = 0) => {
+  if (!monsterEscapeCanAct.value) return
+  sendRoom({ type: 'monster_escape_interact', direction })
+}
+const monsterEscapeChooseFloor = (floor) => sendRoom({ type: 'monster_escape_select_floor', floor })
+const monsterEscapeEquip = (slot) => sendRoom({ type: 'monster_escape_equip', slot })
+const monsterEscapeUseItem = (targetId = '') => sendRoom({ type: 'monster_escape_use_item', targetId })
+const closeMonsterEscapeItemReveal = () => sendRoom({ type: 'monster_escape_close_item_reveal' })
+let monsterEscapeDirection = 0
+let monsterEscapeRunning = false
+function syncMonsterEscapeInput() {
+  if (currentView.value !== 'monster-escape') return
+  sendRoom({ type: 'monster_escape_input', direction: monsterEscapeDirection, running: monsterEscapeRunning })
+}
+function handleMonsterEscapeKeydown(event) {
+  if (currentView.value !== 'monster-escape' || event.target instanceof HTMLInputElement || event.target instanceof HTMLTextAreaElement) return
+  const key = event.key.toLowerCase()
+  if (key === 'a' || key === 'd') {
+    event.preventDefault()
+    monsterEscapeDirection = key === 'a' ? -1 : 1
+    syncMonsterEscapeInput()
+  } else if (key === 'shift') {
+    monsterEscapeRunning = true
+    syncMonsterEscapeInput()
+  } else if (key === 'e' && !event.repeat) {
+    event.preventDefault()
+    monsterEscapeInteract()
+  } else if (key === ' ' && !event.repeat) {
+    event.preventDefault()
+    monsterEscapeUseItem()
+  } else if (/^[1-5]$/.test(key) && !event.repeat) {
+    event.preventDefault()
+    monsterEscapeEquip(Number(key) - 1)
+  }
+}
+function handleMonsterEscapeKeyup(event) {
+  if (currentView.value !== 'monster-escape') return
+  const key = event.key.toLowerCase()
+  if (key === 'a' || key === 'd') {
+    if ((key === 'a' && monsterEscapeDirection === -1) || (key === 'd' && monsterEscapeDirection === 1)) {
+      monsterEscapeDirection = 0
+      syncMonsterEscapeInput()
+    }
+  } else if (key === 'shift') {
+    monsterEscapeRunning = false
+    syncMonsterEscapeInput()
+  }
+}
 function startFullWaterPour() {
   if (!canStartFullWaterPour.value || fullWaterPourHeld.value) return
   fullWaterPourHeld.value = true
@@ -1323,6 +1438,9 @@ const renderGameToText = () =>
       maxGames: Number(maxGames.value),
       manualGames: manualGames.value,
       selectedGames: selectedGames.value,
+      ...(roomMode.value === 'Team' && {
+        teamGames: teamGames.value.map((game) => ({ id: game.id, name: game.name })),
+      }),
       playerCount: playerCount.value,
       teamOne: teamOne.value.map((player) => (player ? { name: player.name, ready: player.ready, bot: player.bot } : null)),
       teamTwo: teamTwo.value.map((player) => (player ? { name: player.name, ready: player.ready, bot: player.bot } : null)),
@@ -1447,6 +1565,27 @@ const renderGameToText = () =>
         players: typeItGame.value.players,
       },
     }),
+    ...(currentView.value === 'monster-escape' && monsterEscapeGame.value && {
+      game: {
+        id: monsterEscapeGame.value.id,
+        round: monsterEscapeGame.value.round,
+        phase: monsterEscapeGame.value.phase,
+        secondsRemaining: monsterEscapeCountdown.value,
+        wins: monsterEscapeGame.value.wins,
+        blockerRemoved: monsterEscapeGame.value.blocker?.removed,
+        blockerProgress: monsterEscapeGame.value.blocker?.progress,
+        self: monsterEscapeSelf.value && {
+          role: monsterEscapeSelf.value.role,
+          floor: monsterEscapeSelf.value.floor,
+          health: monsterEscapeSelf.value.health,
+          inventory: monsterEscapeSelf.value.inventory,
+          devoured: monsterEscapeSelf.value.devoured,
+          escaped: monsterEscapeSelf.value.escaped,
+          blinded: monsterEscapeIsBlind.value,
+        },
+        visiblePlayers: monsterEscapeGame.value.players,
+      },
+    }),
   })
 
 onMounted(() => {
@@ -1460,6 +1599,8 @@ onMounted(() => {
   window.addEventListener('keydown', unlockAudio)
   window.addEventListener('pointerover', handleMenuButtonHover)
   window.addEventListener('click', handleMenuButtonClick, true)
+  window.addEventListener('keydown', handleMonsterEscapeKeydown)
+  window.addEventListener('keyup', handleMonsterEscapeKeyup)
   const invitedRoom = new URLSearchParams(location.search).get('room')
   if (invitedRoom) joinOnlineRoom(invitedRoom.toUpperCase())
 })
@@ -1478,6 +1619,8 @@ onBeforeUnmount(() => {
   window.removeEventListener('keydown', unlockAudio)
   window.removeEventListener('pointerover', handleMenuButtonHover)
   window.removeEventListener('click', handleMenuButtonClick, true)
+  window.removeEventListener('keydown', handleMonsterEscapeKeydown)
+  window.removeEventListener('keyup', handleMonsterEscapeKeyup)
   if (activeMusic) {
     activeMusic.pause()
     activeMusic = null
@@ -2273,6 +2416,117 @@ onBeforeUnmount(() => {
     </section>
   </main>
 
+  <main v-else-if="currentView === 'monster-escape' || gameInstructions?.game?.id === 'monster_escape_office'" class="reaction-page monster-escape-page" aria-labelledby="monster-escape-title">
+    <header class="reaction-page__header">
+      <button class="reaction-menu-trigger" type="button" aria-label="Open game menu" aria-controls="monster-escape-game-menu" :aria-expanded="showReactionMenu" @click="toggleReactionMenu">
+        <span aria-hidden="true">&#9881;</span>
+      </button>
+      <div>
+        <p class="reaction-page__eyebrow">LET'S PLAY!</p>
+        <h1 id="monster-escape-title">Monster Escape: Office</h1>
+      </div>
+      <div class="reaction-page__round-wrap">
+        <p class="reaction-page__round">Round {{ monsterEscapeGame?.round ?? 1 }} / {{ monsterEscapeGame?.maxRounds ?? 3 }}</p>
+        <p class="monster-escape-score"><span>Blue {{ monsterEscapeGame?.wins?.human ?? 0 }}</span><span>Red {{ monsterEscapeGame?.wins?.monster ?? 0 }}</span></p>
+      </div>
+      <section v-if="showReactionMenu" id="monster-escape-game-menu" class="reaction-menu" aria-label="Game menu">
+        <button type="button" @click="resumeReaction">Resume</button>
+        <button type="button" @click="openReactionSettings">Settings</button>
+        <button class="reaction-menu__quit" type="button" @click="quitActiveGame">Quit</button>
+      </section>
+    </header>
+
+    <section class="monster-escape" aria-live="polite">
+      <div class="monster-escape__topline">
+        <strong>{{ monsterEscapeStatus }}</strong>
+        <span v-if="monsterEscapeGame?.phase === 'active'">{{ monsterEscapeCountdown }}s</span>
+      </div>
+      <div class="monster-escape-camera" :class="{ 'monster-escape-camera--blind': monsterEscapeIsBlind }" aria-label="Office map">
+        <div class="monster-escape-world" :style="monsterEscapeWorldStyle">
+          <img class="monster-escape-map" src="/games/team/monster_escape_office/map/template.png" alt="Office escape map" />
+          <img
+            v-if="!monsterEscapeGame?.blocker?.removed"
+            class="monster-escape-locker"
+            src="/games/team/monster_escape_office/misc/items/props/fallen_metal_locker.png"
+            alt="Locker blocking the exit"
+          />
+          <span v-for="spot in monsterEscapeGame?.visibleSearchSpots || []" :key="spot.id" class="monster-escape-marker monster-escape-marker--search" :style="{ left: `${spot.x}px`, top: `${spot.y}px` }">?</span>
+          <span v-for="spot in monsterEscapeGame?.visibleHideSpots || []" :key="spot.id" class="monster-escape-marker monster-escape-marker--hide" :style="{ left: `${spot.x}px`, top: `${spot.y}px` }">Hide</span>
+          <article
+            v-for="player in monsterEscapeGame?.players || []"
+            :key="player.playerId"
+            class="monster-escape-character"
+            :class="{
+              'monster-escape-character--human': player.role === 'human',
+              'monster-escape-character--monster': player.role === 'monster',
+              'monster-escape-character--hidden': player.hidden,
+              'monster-escape-character--out': player.devoured || player.escaped,
+              'monster-escape-character--blinded': player.blinded,
+              'monster-escape-character--self': player.playerId === clientId,
+            }"
+            :style="{ left: `${player.x}px`, top: `${player.y}px` }"
+          >
+            <img :src="monsterEscapeCharacterPath(player)" :alt="`${player.playerName} ${player.role}`" />
+            <strong>{{ player.playerName }}</strong>
+          </article>
+        </div>
+        <div class="monster-escape-fog" aria-hidden="true"></div>
+        <div v-if="monsterEscapeIsBlind" :key="monsterEscapeGame?.blindSequence" class="monster-escape-blind" :class="{ 'monster-escape-blind--fading': monsterEscapeBlindFading }" aria-label="Blinded for five seconds"></div>
+      </div>
+
+      <section class="monster-escape-hud" aria-label="Your status">
+        <div class="monster-escape-hud__identity">
+          <span :class="`monster-escape-role monster-escape-role--${monsterEscapeSelf?.role || 'human'}`">{{ monsterEscapeSelf?.role === 'monster' ? 'Red · Monster' : 'Blue · Human' }}</span>
+          <span>Floor {{ monsterEscapeSelf?.floor ?? '—' }}</span>
+          <span v-if="monsterEscapeSelf?.role === 'human'" class="monster-escape-health" :aria-label="`${monsterEscapeSelf?.health || 0} health`">
+            <i v-for="bar in 3" :key="bar" :class="{ 'monster-escape-health__bar--empty': bar > (monsterEscapeSelf?.health || 0) }"></i>
+          </span>
+        </div>
+        <p v-if="monsterEscapeGame?.blocker?.lifting" class="monster-escape-lifting">Lifting exit blocker {{ Math.round((monsterEscapeGame.blocker.progress || 0) * 100) }}%</p>
+        <div v-if="monsterEscapeSelf?.role === 'human'" class="monster-escape-inventory" aria-label="Inventory; use numbers to equip, Space to use">
+          <button
+            v-for="slot in 5"
+            :key="slot"
+            type="button"
+            :class="{ 'monster-escape-inventory__slot--equipped': monsterEscapeSelf?.equippedSlot === slot - 1 }"
+            :disabled="!monsterEscapeSelf?.inventory?.[slot - 1]"
+            @click="monsterEscapeEquip(slot - 1)"
+          >
+            <b>{{ slot }}</b>
+            <img v-if="monsterEscapeSelf?.inventory?.[slot - 1]" :src="monsterEscapeItemPath(monsterEscapeItemDefinitions[monsterEscapeSelf.inventory[slot - 1]])" :alt="monsterEscapeItemDefinitions[monsterEscapeSelf.inventory[slot - 1]]?.label" />
+          </button>
+          <button class="monster-escape-use" type="button" :disabled="!monsterEscapeSelf?.inventory?.[monsterEscapeSelf?.equippedSlot] || !monsterEscapeCanAct" @click="monsterEscapeUseItem">Use <kbd>Space</kbd></button>
+        </div>
+        <div class="monster-escape-controls">
+          <button type="button" :disabled="!monsterEscapeCanAct" @click="monsterEscapeInteract">Interact <kbd>E</kbd></button>
+          <template v-if="monsterEscapeSelf?.role === 'monster'">
+            <button type="button" :disabled="!monsterEscapeCanAct" @click="monsterEscapeInteract(-1)">Left stairs ↑</button>
+            <button type="button" :disabled="!monsterEscapeCanAct" @click="monsterEscapeInteract(1)">Left stairs ↓</button>
+          </template>
+          <small>A / D move · hold Shift to run</small>
+        </div>
+      </section>
+
+      <section v-if="monsterEscapeSelf?.awaitingTransit" class="monster-escape-modal" role="dialog" aria-label="Choose a destination floor">
+        <h2>Choose a floor</h2>
+        <p>Travel takes 3 seconds.</p>
+        <div>
+          <button v-for="floor in [1, 2, 3, 4, 5].filter((floor) => floor !== monsterEscapeSelf?.floor)" :key="floor" type="button" @click="monsterEscapeChooseFloor(floor)">Floor {{ floor }}</button>
+        </div>
+      </section>
+      <section v-if="monsterEscapeItemReveal" class="monster-escape-modal monster-escape-modal--item" role="dialog" aria-label="Item found">
+        <button class="monster-escape-modal__close" type="button" aria-label="Close item reveal" @click="closeMonsterEscapeItemReveal">×</button>
+        <img :src="monsterEscapeItemPath(monsterEscapeItemReveal)" :alt="monsterEscapeItemReveal.label" />
+        <h2>{{ monsterEscapeItemReveal.label }}</h2>
+        <p>{{ monsterEscapeItemReveal.effect }}</p>
+      </section>
+      <section v-if="monsterEscapeSelf?.inventory?.[monsterEscapeSelf?.equippedSlot] === 'life_injector' && monsterEscapeReviveTargets.length" class="monster-escape-revive" aria-label="Choose teammate to revive">
+        <span>Life injector:</span>
+        <button v-for="player in monsterEscapeReviveTargets" :key="player.playerId" type="button" @click="monsterEscapeUseItem(player.playerId)">Revive {{ player.playerName }}</button>
+      </section>
+    </section>
+  </main>
+
   <main v-else class="room-page" aria-labelledby="room-title">
     <div class="room-page__backdrop" aria-hidden="true"></div>
 
@@ -2306,7 +2560,20 @@ onBeforeUnmount(() => {
           </select>
         </label>
 
-        <label v-if="roomMode !== 'For Fun'" class="room-field">
+        <section v-if="roomMode === 'Team'" class="team-games" aria-labelledby="team-games-title">
+          <div class="team-games__heading">
+            <span>Team mode</span>
+            <strong id="team-games-title">Team games</strong>
+          </div>
+          <article v-for="game in teamGames" :key="game.id" class="team-games__game">
+            <strong>{{ game.name }}</strong>
+            <p>{{ game.description }}</p>
+            <small>Best of {{ game.rounds }} · First to {{ game.rounds_to_win }} rounds</small>
+          </article>
+          <p v-if="!teamGames.length" class="team-games__empty">No Team games are available yet.</p>
+        </section>
+
+        <label v-if="roomMode !== 'For Fun' && roomMode !== 'Team'" class="room-field">
           <span class="room-field__label">Max Games</span>
           <select v-model="maxGames" :disabled="!isRoomHost || !roomIsLobby" @change="updateRoomSettings">
             <option>3</option>
@@ -2316,7 +2583,7 @@ onBeforeUnmount(() => {
           </select>
         </label>
 
-        <label class="room-field">
+        <label v-if="roomMode !== 'Team'" class="room-field">
           <span class="room-field__label">Format</span>
           <select v-model="roomFormat" :disabled="!isRoomHost || !roomIsLobby" @change="updateRoomSettings">
             <option>Elimination</option>
@@ -2324,12 +2591,12 @@ onBeforeUnmount(() => {
           </select>
         </label>
 
-        <label class="manual-games-toggle">
+        <label v-if="roomMode !== 'Team'" class="manual-games-toggle">
           <input v-model="manualGames" type="checkbox" :disabled="!isRoomHost || !roomIsLobby" @change="updateManualGames" />
           <span>Choose Games Manually</span>
         </label>
         <button
-          v-if="manualGames"
+          v-if="manualGames && roomMode !== 'Team'"
           class="room-action room-action--choose-games"
           type="button"
           :disabled="isRoomHost && !roomIsLobby"
