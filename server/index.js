@@ -84,7 +84,10 @@ const MONSTER_ESCAPE_MONSTER_LEAVE_MS = 5_000
 const MONSTER_ESCAPE_HIDE_SEARCH_COOLDOWN_MS = 60_000
 const MONSTER_ESCAPE_INTERACT_RANGE = 76
 const MONSTER_ESCAPE_FLOORS = [1, 2, 3, 4, 5]
-const MONSTER_ESCAPE_FLOOR_Y = { 1: 847, 2: 670, 3: 493, 4: 316, 5: 139 }
+// guide.png is the 1672 x 941 source map. These are the top edges of its red
+// floor bands, so player feet sit on the visible solid ground rather than in it.
+const MONSTER_ESCAPE_MAP_WIDTH = 1672
+const MONSTER_ESCAPE_FLOOR_Y = { 1: 933, 2: 749, 3: 568, 4: 378, 5: 189 }
 const MONSTER_ESCAPE_LEFT_STAIRS_X = 170
 const MONSTER_ESCAPE_ELEVATOR_X = 1570
 const MONSTER_ESCAPE_EXIT = { floor: 1, x: 1120 }
@@ -624,6 +627,8 @@ function monsterEscapeSpawnRound(room) {
       lastFoundItem: null,
       itemRevealUntil: 0,
       facing: 'right',
+      moving: false,
+      running: false,
     })
   })
   game.inputs.clear()
@@ -881,29 +886,41 @@ function monsterEscapeSetInput(room, clientId, direction, running) {
   return true
 }
 
+function monsterEscapeMoveBotHorizontally(player, destinationX, speed) {
+  const direction = Math.sign(destinationX - player.x)
+  player.moving = Boolean(direction)
+  player.running = false
+  player.x += direction * speed
+  if (direction) player.facing = direction < 0 ? 'left' : 'right'
+  return direction
+}
+
 function monsterEscapeTickBots(room, now) {
   const game = room.game
   for (const player of game.players.values()) {
     const roomPlayer = findPlayer(room, player.playerId)?.player
-    if (!roomPlayer?.bot || !monsterEscapeIsActive(player) || player.hiddenSpotId || player.searchingUntil || player.transitEndsAt) continue
+    if (!roomPlayer?.bot) continue
+    player.moving = false
+    player.running = false
+    if (!monsterEscapeIsActive(player) || player.hiddenSpotId || player.searchingUntil || player.transitEndsAt) continue
     if (player.role === 'human') {
       if (player.floor !== 1) {
-        player.x += Math.sign(MONSTER_ESCAPE_LEFT_STAIRS_X - player.x) * 7
+        monsterEscapeMoveBotHorizontally(player, MONSTER_ESCAPE_LEFT_STAIRS_X, 7)
         if (Math.abs(player.x - MONSTER_ESCAPE_LEFT_STAIRS_X) < 10) {
           player.floor -= 1
           player.floorEnteredAt = now
         }
       } else {
-        player.x += Math.sign(MONSTER_ESCAPE_EXIT.x - player.x) * 7
+        monsterEscapeMoveBotHorizontally(player, MONSTER_ESCAPE_EXIT.x, 7)
         if (Math.abs(player.x - MONSTER_ESCAPE_EXIT.x) <= MONSTER_ESCAPE_INTERACT_RANGE) monsterEscapeInteract(room, player.playerId)
       }
     } else {
       const target = [...game.players.values()].find((entry) => entry.role === 'human' && monsterEscapeIsActive(entry) && !entry.hiddenSpotId && entry.floor === player.floor)
       if (target) {
-        player.x += Math.sign(target.x - player.x) * 6
+        monsterEscapeMoveBotHorizontally(player, target.x, 6)
         if (monsterEscapeDistance(player, target) <= MONSTER_ESCAPE_INTERACT_RANGE) monsterEscapeInteract(room, player.playerId)
       } else {
-        player.x += Math.sign(MONSTER_ESCAPE_LEFT_STAIRS_X - player.x) * 6
+        monsterEscapeMoveBotHorizontally(player, MONSTER_ESCAPE_LEFT_STAIRS_X, 6)
         if (Math.abs(player.x - MONSTER_ESCAPE_LEFT_STAIRS_X) <= MONSTER_ESCAPE_INTERACT_RANGE) {
           const direction = player.floor === 1 ? 1 : player.floor === 5 ? -1 : (Math.random() < 0.5 ? -1 : 1)
           monsterEscapeMonsterStairs(room, player, direction)
@@ -952,7 +969,7 @@ function monsterEscapeTick(room, now = Date.now()) {
       const speed = player.role === 'human'
         ? ((input.running ? 150 : 75) * (player.adrenalineUntil > now ? 1.5 : 1))
         : (input.running ? 175 : 60)
-      player.x = Math.max(80, Math.min(1600, player.x + input.direction * speed * (MONSTER_ESCAPE_TICK_MS / 1_000)))
+      player.x = Math.max(80, Math.min(MONSTER_ESCAPE_MAP_WIDTH - 72, player.x + input.direction * speed * (MONSTER_ESCAPE_TICK_MS / 1_000)))
       player.facing = input.direction < 0 ? 'left' : 'right'
     }
   }
@@ -1071,8 +1088,8 @@ function monsterEscapeGameView(room, viewerId) {
         killing: Boolean(entry.killTargetId),
         blinded: entry.blindedUntil > now,
         frozen: entry.frozenUntil > now,
-        moving: Boolean(game.inputs.get(entry.playerId)?.direction),
-        running: Boolean(game.inputs.get(entry.playerId)?.running),
+        moving: Boolean(entry.moving || game.inputs.get(entry.playerId)?.direction),
+        running: Boolean(entry.running || game.inputs.get(entry.playerId)?.running),
       })),
     visibleSearchSpots: MONSTER_ESCAPE_SEARCH_SPOTS.filter((spot) => !game.searchedSpotIds.has(spot.id) && (!follow || (spot.floor === follow.floor && Math.abs(spot.x - follow.x) <= monsterEscapeVision(follow, now)))),
     visibleHideSpots: MONSTER_ESCAPE_HIDE_SPOTS.filter((spot) => !follow || (spot.floor === follow.floor && Math.abs(spot.x - follow.x) <= monsterEscapeVision(follow, now))),

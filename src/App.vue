@@ -280,7 +280,15 @@ const monsterEscapeCharacterPath = (player) => {
   if (!player?.model) return ''
   const side = player.role === 'human' ? 'humans' : 'monsters'
   const motion = player.moving ? (player.running ? 'run.gif' : 'walk.gif') : 'idle.png'
-  return `/games/team/monster_escape_office/characters/${side}/${player.model}/${motion}`
+  const preparedMotionDirectory = motion === 'idle.png' ? '' : 'transparent/'
+  return `/games/team/monster_escape_office/characters/${side}/${player.model}/${preparedMotionDirectory}${motion}`
+}
+const monsterEscapeIdleFootOffset = (player) => {
+  if (player?.moving) return 0
+  // The supplied idle PNGs are already transparent; only their transparent
+  // bottom padding is offset so their visible feet match the motion GIF floor.
+  const transparentBottomPadding = { bob: 10 / 789, mae: 15 / 741, big_steps: 2 / 713, tall_silhoutte: 0 }
+  return (transparentBottomPadding[player?.model] || 0) * 71
 }
 const monsterEscapeItemPath = (item) => `/games/team/monster_escape_office/misc/items/searchable_usable/${item.asset}`
 const isTypeItSpectator = computed(() =>
@@ -2463,8 +2471,9 @@ onBeforeUnmount(() => {
               'monster-escape-character--out': player.devoured || player.escaped,
               'monster-escape-character--blinded': player.blinded,
               'monster-escape-character--self': player.playerId === clientId,
+              'monster-escape-character--facing-left': player.facing === 'left',
             }"
-            :style="{ left: `${player.x}px`, top: `${player.y}px` }"
+            :style="{ left: `${player.x}px`, top: `${player.y}px`, '--monster-escape-foot-offset': `${monsterEscapeIdleFootOffset(player)}px` }"
           >
             <img :src="monsterEscapeCharacterPath(player)" :alt="`${player.playerName} ${player.role}`" />
             <strong>{{ player.playerName }}</strong>

@@ -4,11 +4,12 @@
   "private": true,
   "type": "module",
   "scripts": {
+    "prepare:monster-sprites": "node scripts/prepare-monster-escape-sprites.mjs",
     "dev": "vite",
     "dev:all": "node dev.mjs",
     "vite": "vite",
     "server": "node server/index.js",
-    "build": "vite build",
+    "build": "npm run prepare:monster-sprites && vite build",
     "preview": "vite preview"
   },
   "dependencies": {
@@ -17,6 +18,7 @@
   },
   "devDependencies": {
     "@vitejs/plugin-vue": "^5.2.1",
+    "gifwrap": "^0.10.1",
     "vite": "^6.0.5"
   }
 }

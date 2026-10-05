@@ -3692,17 +3692,18 @@ button {
 .monster-escape__topline strong { font-size: clamp(0.82rem, 1.8vw, 1rem); }
 .monster-escape__topline > span { min-width: 3rem; color: #c3434e; font-size: 1.05rem; font-weight: 900; text-align: right; }
 .monster-escape-camera { position: relative; min-height: clamp(23rem, 59vh, 39rem); overflow: hidden; border: 0.22rem solid #325676; border-radius: 1.15rem; background: #0b1925; box-shadow: 0 0.8rem 2rem rgb(4 44 65 / 0.28); isolation: isolate; }
-.monster-escape-world { position: absolute; top: 50%; left: 50%; width: 1680px; height: 945px; transform-origin: center; }
-.monster-escape-map { position: absolute; inset: 0; display: block; width: 1680px; height: 945px; max-width: none; user-select: none; }
+.monster-escape-world { position: absolute; top: 50%; left: 50%; width: 1672px; height: 941px; transform-origin: center; }
+.monster-escape-map { position: absolute; inset: 0; display: block; width: 1672px; height: 941px; max-width: none; user-select: none; }
 .monster-escape-fog { position: absolute; z-index: 4; inset: 0; pointer-events: none; background: radial-gradient(circle min(37vw, 17rem) at 50% 50%, transparent 0 35%, rgb(2 8 17 / 0.29) 60%, rgb(2 8 17 / 0.91) 100%); }
 .monster-escape-locker { position: absolute; z-index: 2; width: 9.4rem; height: auto; left: 1050px; top: 771px; transform: rotate(0); transform-origin: center; filter: drop-shadow(0 0.3rem 0.25rem rgb(0 0 0 / 0.35)); }
 .monster-escape-marker { position: absolute; z-index: 2; display: grid; min-width: 1.5rem; min-height: 1.5rem; place-items: center; transform: translate(-50%, -50%); border: 1px solid rgb(255 255 255 / 0.7); border-radius: 99px; color: #fff; font-size: 0.64rem; font-weight: 900; text-shadow: 0 1px 2px #000; box-shadow: 0 0 0.75rem currentColor; }
 .monster-escape-marker--search { background: #e5a32d; color: #fff2ba; }
 .monster-escape-marker--hide { min-width: auto; padding: 0.18rem 0.35rem; background: #8267c9; color: #f7efff; }
-.monster-escape-character { position: absolute; z-index: 3; display: grid; width: 90px; height: 96px; place-items: end center; transform: translate(-50%, -82%); color: #fff; pointer-events: none; text-align: center; text-shadow: 0 2px 3px #000; }
-.monster-escape-character img { width: auto; max-width: 90px; height: 71px; object-fit: contain; filter: drop-shadow(0 0.2rem 0.22rem rgb(0 0 0 / 0.45)); }
-.monster-escape-character strong { max-width: 96px; overflow: hidden; font-size: 0.68rem; font-weight: 900; text-overflow: ellipsis; white-space: nowrap; }
-.monster-escape-character--self::after { position: absolute; bottom: 1.3rem; width: 2.9rem; height: 0.5rem; border: 2px solid #eaff67; border-radius: 50%; content: ''; filter: drop-shadow(0 0 0.35rem #c7ff2d); }
+.monster-escape-character { position: absolute; z-index: 3; width: 90px; height: 71px; transform: translate(-50%, -100%); color: #fff; pointer-events: none; text-align: center; text-shadow: 0 2px 3px #000; }
+.monster-escape-character img { position: absolute; bottom: 0; left: 50%; display: block; width: auto; max-width: 90px; height: 71px; object-fit: contain; object-position: center bottom; transform: translateX(-50%) translateY(var(--monster-escape-foot-offset, 0)); transform-origin: center bottom; filter: drop-shadow(0 0.2rem 0.22rem rgb(0 0 0 / 0.45)); }
+.monster-escape-character--facing-left img { transform: translateX(-50%) translateY(var(--monster-escape-foot-offset, 0)) scaleX(-1); }
+.monster-escape-character strong { position: absolute; top: calc(100% + 0.32rem); left: 50%; max-width: 96px; overflow: hidden; transform: translateX(-50%); font-size: 0.68rem; font-weight: 900; text-overflow: ellipsis; white-space: nowrap; }
+.monster-escape-character--self::after { position: absolute; bottom: -0.34rem; left: 50%; width: 2.9rem; height: 0.5rem; transform: translateX(-50%); border: 2px solid #eaff67; border-radius: 50%; content: ''; filter: drop-shadow(0 0 0.35rem #c7ff2d); }
 .monster-escape-character--monster img { filter: drop-shadow(0 0.2rem 0.24rem rgb(0 0 0 / 0.7)) hue-rotate(305deg) saturate(1.35); }
 .monster-escape-character--hidden { opacity: 0.2; }
 .monster-escape-character--out { opacity: 0.36; filter: grayscale(1); }
