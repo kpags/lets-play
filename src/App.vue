@@ -225,6 +225,7 @@ const monsterEscapeCountdown = computed(() => {
   const serverNow = reactionClockNow.value + reactionServerClockOffset.value
   return Math.max(0, Math.ceil((monsterEscapeGame.value.roundEndsAt - serverNow) / 1000))
 })
+const monsterEscapeTransitCountdown = computed(() => Math.max(0, Math.ceil(Number(monsterEscapeSelf.value?.transitRemainingMs || 0) / 1_000)))
 const monsterEscapeCanAct = computed(() => {
   const self = monsterEscapeSelf.value
   return monsterEscapeGame.value?.phase === 'active'
@@ -239,6 +240,20 @@ const monsterEscapeCanAct = computed(() => {
 })
 const monsterEscapeIsBlind = computed(() => Number(monsterEscapeSelf.value?.blindRemainingMs || 0) > 0)
 const monsterEscapeBlindFading = computed(() => Number(monsterEscapeSelf.value?.blindRemainingMs || 0) <= 1_000)
+const monsterEscapeIsDevouredVictim = computed(() => monsterEscapeSelf.value?.role === 'human'
+  && Boolean(monsterEscapeSelf.value?.grabbedById) && !monsterEscapeSelf.value?.devoured)
+const monsterEscapeIsDevouring = computed(() => monsterEscapeSelf.value?.role === 'monster'
+  && Boolean(monsterEscapeSelf.value?.killTargetId))
+const monsterEscapeInventoryTimerSeconds = (slot) => {
+  const serverNow = reactionClockNow.value + reactionServerClockOffset.value
+  const endsAt = Number(monsterEscapeSelf.value?.inventoryTimerEndsAt?.[slot] || 0)
+  return endsAt > serverNow ? Math.ceil((endsAt - serverNow) / 1_000) : 0
+}
+const monsterEscapeEquippedItemName = computed(() => {
+  const self = monsterEscapeSelf.value
+  const itemId = self?.inventory?.[self?.equippedSlot]
+  return itemId ? monsterEscapeItemDefinitions[itemId]?.label || '' : ''
+})
 const monsterEscapeWorldStyle = computed(() => {
   const camera = monsterEscapeGame.value?.camera
   if (!camera) return {}
@@ -254,6 +269,7 @@ const monsterEscapeStatus = computed(() => {
   if (self?.devoured) return 'You were devoured. Spectating your team.'
   if (self?.escaped) return 'You escaped. Spectating your team.'
   if (monsterEscapeIsBlind.value) return 'Blinded — you cannot move or attack.'
+  if (monsterEscapeIsDevouring.value) return 'Devouring a human…'
   if (Number(self?.freezeRemainingMs || 0) > 0) return 'Frozen — leave this floor once you thaw.'
   if (self?.grabbedById) return 'Grabbed! Wait for help.'
   if (Number(self?.searchRemainingMs || 0) > 0) return 'Searching…'
@@ -279,9 +295,20 @@ const monsterEscapeReviveTargets = computed(() => (monsterEscapeGame.value?.play
 const monsterEscapeCharacterPath = (player) => {
   if (!player?.model) return ''
   const side = player.role === 'human' ? 'humans' : 'monsters'
-  const motion = player.moving ? (player.running ? 'run.gif' : 'walk.gif') : 'idle.png'
+  const prefersReducedMotion = window.matchMedia?.('(prefers-reduced-motion: reduce)').matches
+  const motion = !prefersReducedMotion && player.moving ? (player.running ? 'run.gif' : 'walk.gif') : 'idle.png'
   const preparedMotionDirectory = motion === 'idle.png' ? '' : 'transparent/'
   return `/games/team/monster_escape_office/characters/${side}/${player.model}/${preparedMotionDirectory}${motion}`
+}
+const monsterEscapeSearchProgressStyle = (player) => ({ '--monster-search-progress': `${Math.min(1, Math.max(0, Number(player.searchProgress || 0))) * 360}deg` })
+const monsterEscapeFlashlightStyle = (player) => {
+  const camera = monsterEscapeGame.value?.camera
+  if (!camera) return {}
+  const directionOffset = player.facing === 'left' ? -222 : 12
+  return {
+    left: `calc(50% + ${player.x - camera.x + directionOffset}px)`,
+    top: `calc(50% + ${player.y - camera.y - 43}px)`,
+  }
 }
 const monsterEscapeIdleFootOffset = (player) => {
   if (player?.moving) return 0
@@ -1206,12 +1233,16 @@ const monsterEscapeInteract = (direction = 0) => {
   if (!monsterEscapeCanAct.value) return
   sendRoom({ type: 'monster_escape_interact', direction })
 }
+const monsterEscapeCancelSearch = () => {
+  if (currentView.value === 'monster-escape') sendRoom({ type: 'monster_escape_search_cancel' })
+}
 const monsterEscapeChooseFloor = (floor) => sendRoom({ type: 'monster_escape_select_floor', floor })
 const monsterEscapeEquip = (slot) => sendRoom({ type: 'monster_escape_equip', slot })
 const monsterEscapeUseItem = (targetId = '') => sendRoom({ type: 'monster_escape_use_item', targetId })
 const closeMonsterEscapeItemReveal = () => sendRoom({ type: 'monster_escape_close_item_reveal' })
 let monsterEscapeDirection = 0
 let monsterEscapeRunning = false
+let monsterEscapeInteractPointerId = null
 function syncMonsterEscapeInput() {
   if (currentView.value !== 'monster-escape') return
   sendRoom({ type: 'monster_escape_input', direction: monsterEscapeDirection, running: monsterEscapeRunning })
@@ -1248,7 +1279,26 @@ function handleMonsterEscapeKeyup(event) {
   } else if (key === 'shift') {
     monsterEscapeRunning = false
     syncMonsterEscapeInput()
+  } else if (key === 'e') {
+    monsterEscapeCancelSearch()
   }
+}
+function handleMonsterEscapeInteractPointerdown(event) {
+  monsterEscapeInteractPointerId = event.pointerId
+  monsterEscapeInteract()
+}
+function handleMonsterEscapePointerRelease(event) {
+  if (monsterEscapeInteractPointerId === null || event.pointerId !== monsterEscapeInteractPointerId) return
+  monsterEscapeInteractPointerId = null
+  monsterEscapeCancelSearch()
+}
+function handleMonsterEscapeWindowBlur() {
+  if (currentView.value !== 'monster-escape') return
+  monsterEscapeInteractPointerId = null
+  monsterEscapeDirection = 0
+  monsterEscapeRunning = false
+  syncMonsterEscapeInput()
+  monsterEscapeCancelSearch()
 }
 function startFullWaterPour() {
   if (!canStartFullWaterPour.value || fullWaterPourHeld.value) return
@@ -1579,19 +1629,33 @@ const renderGameToText = () =>
         round: monsterEscapeGame.value.round,
         phase: monsterEscapeGame.value.phase,
         secondsRemaining: monsterEscapeCountdown.value,
+        transitSecondsRemaining: monsterEscapeTransitCountdown.value,
         wins: monsterEscapeGame.value.wins,
         blockerRemoved: monsterEscapeGame.value.blocker?.removed,
         blockerProgress: monsterEscapeGame.value.blocker?.progress,
         self: monsterEscapeSelf.value && {
           role: monsterEscapeSelf.value.role,
           floor: monsterEscapeSelf.value.floor,
+          x: monsterEscapeSelf.value.x,
+          facing: monsterEscapeSelf.value.facing,
+          hidden: Boolean(monsterEscapeSelf.value.hiddenSpotId),
           health: monsterEscapeSelf.value.health,
+          devouring: monsterEscapeIsDevouring.value,
+          beingDevoured: monsterEscapeIsDevouredVictim.value,
+          searching: Number(monsterEscapeSelf.value.searchRemainingMs || 0) > 0,
+          searchProgress: monsterEscapeSelf.value.searchProgress,
+          hideSecondsRemaining: Math.max(0, Math.ceil(Number(monsterEscapeSelf.value.hideRemainingMs || 0) / 1_000)),
+          flashlightSecondsRemaining: Math.max(0, Math.ceil(Number(monsterEscapeSelf.value.flashlightRemainingMs || 0) / 1_000)),
+          equippedItemName: monsterEscapeEquippedItemName.value,
           inventory: monsterEscapeSelf.value.inventory,
+          inventoryTimerSeconds: (monsterEscapeSelf.value.inventory || []).map((_, slot) => monsterEscapeInventoryTimerSeconds(slot)),
           devoured: monsterEscapeSelf.value.devoured,
           escaped: monsterEscapeSelf.value.escaped,
           blinded: monsterEscapeIsBlind.value,
         },
         visiblePlayers: monsterEscapeGame.value.players,
+        emptySearchEvents: monsterEscapeGame.value.emptySearchEvents,
+        devourEvents: monsterEscapeGame.value.devourEvents,
       },
     }),
   })
@@ -1601,7 +1665,10 @@ onMounted(() => {
   reactionClockTimer = window.setInterval(() => { reactionClockNow.value = Date.now() }, 100)
   window.advanceTime = (ms = 0) => { reactionClockNow.value += Number(ms) || 0 }
   window.addEventListener('pointerup', stopFullWaterPour)
+  window.addEventListener('pointerup', handleMonsterEscapePointerRelease)
+  window.addEventListener('pointercancel', handleMonsterEscapePointerRelease)
   window.addEventListener('blur', stopFullWaterPour)
+  window.addEventListener('blur', handleMonsterEscapeWindowBlur)
   window.addEventListener('resize', updateFullWaterPourArc)
   window.addEventListener('pointerdown', unlockAudio)
   window.addEventListener('keydown', unlockAudio)
@@ -1621,7 +1688,10 @@ onBeforeUnmount(() => {
   stopFullWaterPourSound()
   window.clearInterval(reactionClockTimer)
   window.removeEventListener('pointerup', stopFullWaterPour)
+  window.removeEventListener('pointerup', handleMonsterEscapePointerRelease)
+  window.removeEventListener('pointercancel', handleMonsterEscapePointerRelease)
   window.removeEventListener('blur', stopFullWaterPour)
+  window.removeEventListener('blur', handleMonsterEscapeWindowBlur)
   window.removeEventListener('resize', updateFullWaterPourArc)
   window.removeEventListener('pointerdown', unlockAudio)
   window.removeEventListener('keydown', unlockAudio)
@@ -2449,7 +2519,7 @@ onBeforeUnmount(() => {
         <strong>{{ monsterEscapeStatus }}</strong>
         <span v-if="monsterEscapeGame?.phase === 'active'">{{ monsterEscapeCountdown }}s</span>
       </div>
-      <div class="monster-escape-camera" :class="{ 'monster-escape-camera--blind': monsterEscapeIsBlind }" aria-label="Office map">
+        <div class="monster-escape-camera" :class="{ 'monster-escape-camera--blind': monsterEscapeIsBlind }" aria-label="Office map">
         <div class="monster-escape-world" :style="monsterEscapeWorldStyle">
           <img class="monster-escape-map" src="/games/team/monster_escape_office/map/template.png" alt="Office escape map" />
           <img
@@ -2458,8 +2528,19 @@ onBeforeUnmount(() => {
             src="/games/team/monster_escape_office/misc/items/props/fallen_metal_locker.png"
             alt="Locker blocking the exit"
           />
-          <span v-for="spot in monsterEscapeGame?.visibleSearchSpots || []" :key="spot.id" class="monster-escape-marker monster-escape-marker--search" :style="{ left: `${spot.x}px`, top: `${spot.y}px` }">?</span>
-          <span v-for="spot in monsterEscapeGame?.visibleHideSpots || []" :key="spot.id" class="monster-escape-marker monster-escape-marker--hide" :style="{ left: `${spot.x}px`, top: `${spot.y}px` }">Hide</span>
+          <span v-for="spot in monsterEscapeGame?.visibleSearchSpots || []" :key="spot.id" class="monster-escape-marker monster-escape-marker--search" :style="{ left: `${spot.x}px`, top: `${spot.y}px` }">Search</span>
+          <span
+            v-for="event in monsterEscapeGame?.emptySearchEvents || []"
+            :key="`empty-${event.id}`"
+            class="monster-escape-empty-search"
+            :style="{ left: `${event.x}px`, top: `${event.y}px` }"
+            role="status"
+          >Empty</span>
+          <span v-for="spot in monsterEscapeGame?.visibleHideSpots || []" :key="spot.id" class="monster-escape-marker monster-escape-marker--hide" :style="{ left: `${spot.x}px`, top: `${spot.y}px` }">
+            <small v-if="spot.countdownRemainingMs > 0" class="monster-escape-hide-countdown">{{ Math.ceil(spot.countdownRemainingMs / 1_000) }}</small>
+            Hide
+          </span>
+          <span v-for="spot in monsterEscapeGame?.visibleTransitSpots || []" :key="spot.id" class="monster-escape-marker monster-escape-marker--transit" :style="{ left: `${spot.x}px`, top: `${spot.y}px` }">{{ spot.label }}</span>
           <article
             v-for="player in monsterEscapeGame?.players || []"
             :key="player.playerId"
@@ -2476,10 +2557,45 @@ onBeforeUnmount(() => {
             :style="{ left: `${player.x}px`, top: `${player.y}px`, '--monster-escape-foot-offset': `${monsterEscapeIdleFootOffset(player)}px` }"
           >
             <img :src="monsterEscapeCharacterPath(player)" :alt="`${player.playerName} ${player.role}`" />
+            <span v-if="player.searching" class="monster-escape-search-ring" :style="monsterEscapeSearchProgressStyle(player)" :aria-label="`Searching ${Math.round((player.searchProgress || 0) * 100)} percent`"></span>
+            <span v-if="player.role === 'human'" class="monster-escape-character__health" :aria-label="`${Number(player.health || 0).toFixed(1)} health`">
+              <i
+                v-for="bar in 3"
+                :key="bar"
+                :class="{ 'monster-escape-health__bar--empty': Number(player.health || 0) <= bar - 1 }"
+                :style="{ '--monster-health-fill': `${Math.min(1, Math.max(0, Number(player.health || 0) - (bar - 1))) * 100}%` }"
+              ></i>
+            </span>
             <strong>{{ player.playerName }}</strong>
           </article>
         </div>
         <div class="monster-escape-fog" aria-hidden="true"></div>
+        <template v-for="player in monsterEscapeGame?.players || []" :key="`flashlight-${player.playerId}`">
+          <span
+            v-if="player.role === 'human' && !player.hidden && player.flashlightRemainingMs > 0"
+            class="monster-escape-flashlight-beam"
+            :class="{ 'monster-escape-flashlight-beam--left': player.facing === 'left', 'monster-escape-flashlight-beam--blinking': player.flashlightRemainingMs <= 5_000 }"
+            :style="monsterEscapeFlashlightStyle(player)"
+            aria-hidden="true"
+          ></span>
+        </template>
+        <aside v-if="(monsterEscapeGame?.devourEvents || []).length" class="monster-escape-devour-feed" aria-label="Recent devours" aria-live="polite">
+          <p v-for="event in monsterEscapeGame.devourEvents" :key="event.id">
+            <strong>{{ event.monsterName }}</strong> devoured <span>{{ event.humanName }}</span>
+          </p>
+        </aside>
+        <div
+          v-if="monsterEscapeIsDevouredVictim || monsterEscapeIsDevouring"
+          class="monster-escape-devour-shade"
+          :class="{ 'monster-escape-devour-shade--monster': monsterEscapeIsDevouring }"
+          role="status"
+          :aria-label="monsterEscapeIsDevouring ? 'You are devouring a human' : 'You are being devoured'"
+        ></div>
+        <div v-if="monsterEscapeTransitCountdown > 0" class="monster-escape-transit" role="status" aria-live="polite" :aria-label="`Moving to next floor, ${monsterEscapeTransitCountdown} seconds`">
+          <span class="monster-escape-transit__spinner" aria-hidden="true"></span>
+          <strong>{{ monsterEscapeTransitCountdown }}</strong>
+          <small>Moving to floor {{ monsterEscapeSelf?.transitTo?.floor }}</small>
+        </div>
         <div v-if="monsterEscapeIsBlind" :key="monsterEscapeGame?.blindSequence" class="monster-escape-blind" :class="{ 'monster-escape-blind--fading': monsterEscapeBlindFading }" aria-label="Blinded for five seconds"></div>
       </div>
 
@@ -2487,27 +2603,31 @@ onBeforeUnmount(() => {
         <div class="monster-escape-hud__identity">
           <span :class="`monster-escape-role monster-escape-role--${monsterEscapeSelf?.role || 'human'}`">{{ monsterEscapeSelf?.role === 'monster' ? 'Red · Monster' : 'Blue · Human' }}</span>
           <span>Floor {{ monsterEscapeSelf?.floor ?? '—' }}</span>
-          <span v-if="monsterEscapeSelf?.role === 'human'" class="monster-escape-health" :aria-label="`${monsterEscapeSelf?.health || 0} health`">
-            <i v-for="bar in 3" :key="bar" :class="{ 'monster-escape-health__bar--empty': bar > (monsterEscapeSelf?.health || 0) }"></i>
-          </span>
         </div>
         <p v-if="monsterEscapeGame?.blocker?.lifting" class="monster-escape-lifting">Lifting exit blocker {{ Math.round((monsterEscapeGame.blocker.progress || 0) * 100) }}%</p>
-        <div v-if="monsterEscapeSelf?.role === 'human'" class="monster-escape-inventory" aria-label="Inventory; use numbers to equip, Space to use">
-          <button
-            v-for="slot in 5"
-            :key="slot"
-            type="button"
-            :class="{ 'monster-escape-inventory__slot--equipped': monsterEscapeSelf?.equippedSlot === slot - 1 }"
-            :disabled="!monsterEscapeSelf?.inventory?.[slot - 1]"
-            @click="monsterEscapeEquip(slot - 1)"
-          >
-            <b>{{ slot }}</b>
-            <img v-if="monsterEscapeSelf?.inventory?.[slot - 1]" :src="monsterEscapeItemPath(monsterEscapeItemDefinitions[monsterEscapeSelf.inventory[slot - 1]])" :alt="monsterEscapeItemDefinitions[monsterEscapeSelf.inventory[slot - 1]]?.label" />
-          </button>
-          <button class="monster-escape-use" type="button" :disabled="!monsterEscapeSelf?.inventory?.[monsterEscapeSelf?.equippedSlot] || !monsterEscapeCanAct" @click="monsterEscapeUseItem">Use <kbd>Space</kbd></button>
+        <div v-if="monsterEscapeSelf?.role === 'human'" class="monster-escape-inventory-panel">
+          <p v-if="monsterEscapeEquippedItemName" class="monster-escape-inventory__selected">{{ monsterEscapeEquippedItemName }}</p>
+          <div class="monster-escape-inventory" aria-label="Inventory; use numbers to equip, Space to use">
+            <button
+              v-for="slot in 5"
+              :key="slot"
+              type="button"
+              :class="{
+                'monster-escape-inventory__slot--equipped': monsterEscapeSelf?.equippedSlot === slot - 1,
+                'monster-escape-inventory__slot--active': monsterEscapeInventoryTimerSeconds(slot - 1) > 0,
+              }"
+              :disabled="!monsterEscapeSelf?.inventory?.[slot - 1] || monsterEscapeInventoryTimerSeconds(slot - 1) > 0"
+              @click="monsterEscapeEquip(slot - 1)"
+            >
+              <b>{{ slot }}</b>
+              <img v-if="monsterEscapeSelf?.inventory?.[slot - 1]" :src="monsterEscapeItemPath(monsterEscapeItemDefinitions[monsterEscapeSelf.inventory[slot - 1]])" :alt="monsterEscapeItemDefinitions[monsterEscapeSelf.inventory[slot - 1]]?.label" />
+              <small v-if="monsterEscapeInventoryTimerSeconds(slot - 1) > 0" aria-hidden="true">{{ monsterEscapeInventoryTimerSeconds(slot - 1) }}s</small>
+            </button>
+            <button class="monster-escape-use" type="button" :disabled="!monsterEscapeSelf?.inventory?.[monsterEscapeSelf?.equippedSlot] || !monsterEscapeCanAct" @click="monsterEscapeUseItem">Use <kbd>Space</kbd></button>
+          </div>
         </div>
         <div class="monster-escape-controls">
-          <button type="button" :disabled="!monsterEscapeCanAct" @click="monsterEscapeInteract">Interact <kbd>E</kbd></button>
+          <button type="button" :disabled="!monsterEscapeCanAct" @pointerdown.prevent="handleMonsterEscapeInteractPointerdown">Hold to interact <kbd>E</kbd></button>
           <template v-if="monsterEscapeSelf?.role === 'monster'">
             <button type="button" :disabled="!monsterEscapeCanAct" @click="monsterEscapeInteract(-1)">Left stairs ↑</button>
             <button type="button" :disabled="!monsterEscapeCanAct" @click="monsterEscapeInteract(1)">Left stairs ↓</button>
@@ -2520,7 +2640,7 @@ onBeforeUnmount(() => {
         <h2>Choose a floor</h2>
         <p>Travel takes 3 seconds.</p>
         <div>
-          <button v-for="floor in [1, 2, 3, 4, 5].filter((floor) => floor !== monsterEscapeSelf?.floor)" :key="floor" type="button" @click="monsterEscapeChooseFloor(floor)">Floor {{ floor }}</button>
+          <button v-for="floor in monsterEscapeGame?.availableTransitFloors || []" :key="floor" type="button" @click="monsterEscapeChooseFloor(floor)">Floor {{ floor }}</button>
         </div>
       </section>
       <section v-if="monsterEscapeItemReveal" class="monster-escape-modal monster-escape-modal--item" role="dialog" aria-label="Item found">

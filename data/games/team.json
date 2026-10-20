@@ -28,7 +28,7 @@
                     "max_inventory_slot_count": 1
                 },
                 "flashlight": {
-                    "chance": 0.80,
+                    "chance": 0.95,
                     "effect": "Illuminate dark areas for 15 seconds. Also blinds monsters for 5 seconds when hit.",
                     "asset": "misc/items/searchable_usable/flashlight.png",
                     "max_inventory_slot_count": 2

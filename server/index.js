@@ -84,6 +84,9 @@ const MONSTER_ESCAPE_MONSTER_LEAVE_MS = 5_000
 const MONSTER_ESCAPE_HIDE_SEARCH_COOLDOWN_MS = 60_000
 const MONSTER_ESCAPE_INTERACT_RANGE = 76
 const MONSTER_ESCAPE_FLOORS = [1, 2, 3, 4, 5]
+// Guide-map yellow rectangles mark elevator access only on floors 2, 3, and 5.
+const MONSTER_ESCAPE_ELEVATOR_FLOORS = [2, 3, 5]
+const MONSTER_ESCAPE_MONSTER_ATTACK_RANGE = 10
 // guide.png is the 1672 x 941 source map. These are the top edges of its red
 // floor bands, so player feet sit on the visible solid ground rather than in it.
 const MONSTER_ESCAPE_MAP_WIDTH = 1672
@@ -110,13 +113,10 @@ const MONSTER_ESCAPE_SEARCH_SPOTS = [
   { id: 'search-3c', floor: 3, x: 1165 }, { id: 'search-2a', floor: 2, x: 555 }, { id: 'search-2b', floor: 2, x: 1090 },
   { id: 'search-1a', floor: 1, x: 375 }, { id: 'search-1b', floor: 1, x: 865 }, { id: 'search-1c', floor: 1, x: 1320 },
 ]
-const MONSTER_ESCAPE_ITEM_DEFINITIONS = {
-  first_aid_kit: { weight: 0.5, max: 1, asset: 'first_aid.png' },
-  flashlight: { weight: 0.8, max: 2, asset: 'flashlight.png' },
-  lifter: { weight: 0.25, max: 1, asset: 'lifter.png' },
-  life_injector: { weight: 0.15, max: 1, asset: 'life_injector.png' },
-  adrenaline_shot: { weight: 0.6, max: 2, asset: 'adrenaline_shot.png' },
-  sense_booster: { weight: 0.4, max: 1, asset: 'sense_booster.png' },
+const MONSTER_ESCAPE_TIMED_ITEMS = {
+  flashlight: { durationMs: 15_000, timerField: 'flashlightUntil' },
+  adrenaline_shot: { durationMs: 10_000, timerField: 'adrenalineUntil' },
+  sense_booster: { durationMs: 30_000, timerField: 'senseUntil' },
 }
 const MONSTER_ESCAPE_MODELS = {
   human: ['bob', 'mae'],
@@ -603,18 +603,22 @@ function monsterEscapeSpawnRound(room) {
       x: spawn.x,
       health: entry.role === 'human' ? 3 : null,
       inventory: [],
+      activeItemSlots: {},
       equippedSlot: 0,
       devoured: false,
       escaped: false,
       hiddenSpotId: null,
       hiddenUntil: 0,
       searchingUntil: 0,
+      searchStartedAt: 0,
       searchingSpotId: null,
       transitTo: null,
       transitEndsAt: 0,
       awaitingTransit: false,
       grabbedById: null,
       killTargetId: null,
+      killStartedAt: 0,
+      killHealthTickAt: 0,
       killEndsAt: 0,
       blindedUntil: 0,
       frozenUntil: 0,
@@ -679,10 +683,24 @@ function monsterEscapeCompleteKill(room, monster, human) {
   const game = room.game
   if (!game || game.phase !== 'active' || !monster || !human || monster.killTargetId !== human.playerId) return
   monster.killTargetId = null
+  monster.killStartedAt = 0
+  monster.killHealthTickAt = 0
   monster.killEndsAt = 0
   monster.floorEnteredAt = Date.now()
   human.grabbedById = null
+  human.health = 0
   human.devoured = true
+  const playerNames = new Map(roomPlayers(room).map((player) => [player.id, player.name]))
+  const now = Date.now()
+  game.devourEvents = (game.devourEvents || []).filter((event) => event.expiresAt > now)
+  game.devourEventSequence = (game.devourEventSequence || 0) + 1
+  game.devourEvents.push({
+    id: game.devourEventSequence,
+    monsterName: playerNames.get(monster.playerId) || 'A monster',
+    humanName: playerNames.get(human.playerId) || 'A human',
+    expiresAt: now + 3_000,
+  })
+  if (game.devourEvents.length > 3) game.devourEvents.shift()
   const aliveHumans = [...game.players.values()].filter((entry) => entry.role === 'human' && !entry.devoured && !entry.escaped)
   if (!aliveHumans.length) monsterEscapeFinishRound(room, 'monster', 'All humans were devoured.')
 }
@@ -691,9 +709,28 @@ function monsterEscapeCancelKill(room, monster) {
   const game = room.game
   if (!game || !monster?.killTargetId) return
   const target = monsterEscapePlayer(room, monster.killTargetId)
+  monsterEscapeApplyKillDamage(monster, target, Date.now())
   if (target) target.grabbedById = null
   monster.killTargetId = null
+  monster.killStartedAt = 0
+  monster.killHealthTickAt = 0
   monster.killEndsAt = 0
+}
+
+function monsterEscapeApplyKillDamage(monster, human, now) {
+  if (!monster?.killTargetId || !human || monster.killHealthTickAt <= 0 || monster.killEndsAt <= 0) return
+  const through = Math.min(now, monster.killEndsAt)
+  const elapsed = Math.max(0, through - Math.max(monster.killStartedAt, monster.killHealthTickAt))
+  if (elapsed > 0) human.health = Math.max(0, Number(human.health || 0) - (3 * elapsed / MONSTER_ESCAPE_KILL_MS))
+  monster.killHealthTickAt = through
+}
+
+function monsterEscapeStartKill(monster, human, now) {
+  human.grabbedById = monster.playerId
+  monster.killTargetId = human.playerId
+  monster.killStartedAt = now
+  monster.killHealthTickAt = now
+  monster.killEndsAt = now + MONSTER_ESCAPE_KILL_MS
 }
 
 function monsterEscapeBlindMonster(room, monster) {
@@ -706,26 +743,55 @@ function monsterEscapeBlindMonster(room, monster) {
   return true
 }
 
-function monsterEscapeWeightedItem() {
-  const entries = Object.entries(MONSTER_ESCAPE_ITEM_DEFINITIONS)
-  const total = entries.reduce((sum, [, item]) => sum + item.weight, 0)
+function monsterEscapeItemDefinitions() {
+  const game = GAME_CATALOGS.Team.find((entry) => entry.id === 'monster_escape_office')
+  return game?.instructions?.searchable_usable_items || {}
+}
+
+function monsterEscapeWeightedItem(player) {
+  const entries = Object.entries(monsterEscapeItemDefinitions())
+    .filter(([id, item]) => monsterEscapeItemCount(player, id) < Number(item.max_inventory_slot_count || 0))
+    .map(([id, item]) => [id, Number(item.chance) || 0])
+    .filter(([, weight]) => weight > 0)
+  const total = entries.reduce((sum, [, weight]) => sum + weight, 0)
+  if (!total) return null
   let roll = Math.random() * total
-  for (const [id, item] of entries) {
-    roll -= item.weight
+  for (const [id, weight] of entries) {
+    roll -= weight
     if (roll <= 0) return id
   }
-  return entries[0][0]
+  return entries.at(-1)?.[0] || null
 }
 
 function monsterEscapeItemCount(player, itemId) {
   return player.inventory.filter((item) => item === itemId).length
 }
 
+function monsterEscapeInventorySlot(player) {
+  const emptySlot = player.inventory.findIndex((item) => !item)
+  if (emptySlot >= 0) return emptySlot
+  return player.inventory.length < 5 ? player.inventory.length : -1
+}
+
 function monsterEscapeSearch(room, player, spot) {
   const game = room.game
-  if (!game || !player || player.role !== 'human' || !spot || player.searchingUntil || game.searchedSpotIds.has(spot.id)) return false
+  if (!game || game.phase !== 'active' || !player || player.role !== 'human' || !monsterEscapeIsActive(player)
+    || !spot || player.searchingUntil || player.transitEndsAt || player.awaitingTransit
+    || player.grabbedById || game.searchedSpotIds.has(spot.id)) return false
+  player.searchStartedAt = Date.now()
   player.searchingSpotId = spot.id
   player.searchingUntil = Date.now() + MONSTER_ESCAPE_SEARCH_MS
+  broadcastRoom(room, 'game_state')
+  return true
+}
+
+function monsterEscapeCancelSearch(room, playerId) {
+  const game = room.game
+  const player = monsterEscapePlayer(room, playerId)
+  if (!game || game.id !== 'monster_escape_office' || !player?.searchingSpotId) return true
+  player.searchingSpotId = null
+  player.searchStartedAt = 0
+  player.searchingUntil = 0
   broadcastRoom(room, 'game_state')
   return true
 }
@@ -735,30 +801,45 @@ function monsterEscapeResolveSearch(room, player) {
   if (!game || !player.searchingSpotId) return
   const spotId = player.searchingSpotId
   player.searchingSpotId = null
+  player.searchStartedAt = 0
   player.searchingUntil = 0
   game.searchedSpotIds.add(spotId)
   let foundItemId = null
-  if (Math.random() < 0.5 && player.inventory.length < 5) {
-    const candidate = monsterEscapeWeightedItem()
-    const item = MONSTER_ESCAPE_ITEM_DEFINITIONS[candidate]
-    if (monsterEscapeItemCount(player, candidate) < item.max) {
-      player.inventory.push(candidate)
-      foundItemId = candidate
-    }
+  const inventorySlot = monsterEscapeInventorySlot(player)
+  if (Math.random() < 0.5 && inventorySlot >= 0) {
+    foundItemId = monsterEscapeWeightedItem(player)
+    if (foundItemId) player.inventory[inventorySlot] = foundItemId
   }
   player.lastFoundItem = foundItemId
-  player.itemRevealUntil = Date.now() + 5_000
+  const now = Date.now()
+  player.itemRevealUntil = now + 5_000
+  if (!foundItemId) {
+    const spot = MONSTER_ESCAPE_SEARCH_SPOTS.find((entry) => entry.id === spotId)
+    if (spot) {
+      game.emptySearchEvents = game.emptySearchEvents.filter((event) => event.expiresAt > now)
+      game.emptySearchEventSequence = (game.emptySearchEventSequence || 0) + 1
+      game.emptySearchEvents.push({
+        id: game.emptySearchEventSequence,
+        floor: spot.floor,
+        x: spot.x,
+        y: Math.round(MONSTER_ESCAPE_FLOOR_Y[spot.floor] - 92),
+        expiresAt: now + 1_000,
+      })
+    }
+  }
   broadcastRoom(room, 'game_state')
 }
 
 function monsterEscapeStartTransit(room, player, destinationFloor) {
   const game = room.game
-  if (!game || !player || player.role !== 'human' || !monsterEscapeIsActive(player) || player.transitEndsAt || !MONSTER_ESCAPE_FLOORS.includes(destinationFloor)) return false
+  if (!game || !player || player.role !== 'human' || !monsterEscapeIsActive(player) || player.grabbedById || player.transitEndsAt || !MONSTER_ESCAPE_FLOORS.includes(destinationFloor)) return false
   const nearStairs = Math.abs(player.x - MONSTER_ESCAPE_LEFT_STAIRS_X) <= MONSTER_ESCAPE_INTERACT_RANGE
-  const nearElevator = Math.abs(player.x - MONSTER_ESCAPE_ELEVATOR_X) <= MONSTER_ESCAPE_INTERACT_RANGE && player.floor >= 2
-  const valid = nearStairs || (nearElevator && destinationFloor >= 2)
+  const nearElevator = MONSTER_ESCAPE_ELEVATOR_FLOORS.includes(player.floor)
+    && Math.abs(player.x - MONSTER_ESCAPE_ELEVATOR_X) <= MONSTER_ESCAPE_INTERACT_RANGE
+  const valid = nearStairs || (nearElevator && MONSTER_ESCAPE_ELEVATOR_FLOORS.includes(destinationFloor))
   if (!valid || destinationFloor === player.floor) return false
   player.transitTo = { floor: destinationFloor, x: nearStairs ? MONSTER_ESCAPE_LEFT_STAIRS_X : MONSTER_ESCAPE_ELEVATOR_X }
+  player.awaitingTransit = false
   player.transitEndsAt = Date.now() + MONSTER_ESCAPE_TRANSIT_MS
   broadcastRoom(room, 'game_state')
   return true
@@ -782,15 +863,17 @@ function monsterEscapeUseItem(room, player, targetId = '') {
   const itemId = player.inventory[player.equippedSlot]
   if (!itemId) return false
   const now = Date.now()
+  if (Number(player.activeItemSlots?.[player.equippedSlot] || 0) > now) return false
+  const timedItem = MONSTER_ESCAPE_TIMED_ITEMS[itemId]
   if (itemId === 'first_aid_kit') player.health = Math.min(3, player.health + 3)
-  else if (itemId === 'adrenaline_shot') player.adrenalineUntil = now + 10_000
-  else if (itemId === 'sense_booster') player.senseUntil = now + 30_000
+  else if (itemId === 'adrenaline_shot') player.adrenalineUntil = now + timedItem.durationMs
+  else if (itemId === 'sense_booster') player.senseUntil = now + timedItem.durationMs
   else if (itemId === 'flashlight') {
     const target = [...game.players.values()]
       .filter((entry) => entry.role === 'monster' && monsterEscapeIsActive(entry) && monsterEscapeDistance(player, entry) <= monsterEscapeVision(player, now))
       .sort((left, right) => monsterEscapeDistance(player, left) - monsterEscapeDistance(player, right))[0]
     if (!target || (player.facing === 'left' ? target.x > player.x : target.x < player.x)) return false
-    player.flashlightUntil = now + 15_000
+    player.flashlightUntil = now + timedItem.durationMs
     monsterEscapeBlindMonster(room, target)
   } else if (itemId === 'life_injector') {
     const target = monsterEscapePlayer(room, targetId)
@@ -798,8 +881,12 @@ function monsterEscapeUseItem(room, player, targetId = '') {
     const spawn = MONSTER_ESCAPE_HUMAN_SPAWNS[Math.floor(Math.random() * MONSTER_ESCAPE_HUMAN_SPAWNS.length)]
     Object.assign(target, { devoured: false, escaped: false, grabbedById: null, health: 3, floor: spawn.floor, x: spawn.x, floorEnteredAt: now })
   } else if (itemId !== 'lifter') return false
-  player.inventory.splice(player.equippedSlot, 1)
-  player.equippedSlot = Math.max(0, Math.min(player.equippedSlot, player.inventory.length - 1))
+  if (timedItem) {
+    player.activeItemSlots ||= {}
+    player.activeItemSlots[player.equippedSlot] = now + timedItem.durationMs
+  } else {
+    player.inventory[player.equippedSlot] = null
+  }
   broadcastRoom(room, 'game_state')
   return true
 }
@@ -819,20 +906,19 @@ function monsterEscapeInteract(room, clientId, direction = 0) {
       if (target) {
         target.hiddenSpotId = null
         target.hiddenUntil = 0
-        target.grabbedById = player.playerId
-        player.killTargetId = target.playerId
-        player.killEndsAt = now + MONSTER_ESCAPE_KILL_MS
+        monsterEscapeStartKill(player, target, now)
       }
       broadcastRoom(room, 'game_state')
       return true
     }
     const target = [...game.players.values()]
-      .filter((entry) => entry.role === 'human' && monsterEscapeIsActive(entry) && !entry.hiddenSpotId && monsterEscapeDistance(player, entry) <= MONSTER_ESCAPE_INTERACT_RANGE)
+      .filter((entry) => entry.role === 'human' && monsterEscapeIsActive(entry) && !entry.hiddenSpotId
+        && !entry.awaitingTransit && !entry.transitEndsAt
+        && !entry.grabbedById
+        && monsterEscapeDistance(player, entry) <= MONSTER_ESCAPE_MONSTER_ATTACK_RANGE)
       .sort((left, right) => monsterEscapeDistance(player, left) - monsterEscapeDistance(player, right))[0]
     if (!target) return false
-    target.grabbedById = player.playerId
-    player.killTargetId = target.playerId
-    player.killEndsAt = now + MONSTER_ESCAPE_KILL_MS
+    monsterEscapeStartKill(player, target, now)
     broadcastRoom(room, 'game_state')
     return true
   }
@@ -852,7 +938,7 @@ function monsterEscapeInteract(room, clientId, direction = 0) {
     return true
   }
   const stairOrElevator = Math.abs(player.x - MONSTER_ESCAPE_LEFT_STAIRS_X) <= MONSTER_ESCAPE_INTERACT_RANGE
-    || (player.floor >= 2 && Math.abs(player.x - MONSTER_ESCAPE_ELEVATOR_X) <= MONSTER_ESCAPE_INTERACT_RANGE)
+    || (MONSTER_ESCAPE_ELEVATOR_FLOORS.includes(player.floor) && Math.abs(player.x - MONSTER_ESCAPE_ELEVATOR_X) <= MONSTER_ESCAPE_INTERACT_RANGE)
   if (stairOrElevator) {
     player.awaitingTransit = true
     broadcastRoom(room, 'game_state')
@@ -915,10 +1001,11 @@ function monsterEscapeTickBots(room, now) {
         if (Math.abs(player.x - MONSTER_ESCAPE_EXIT.x) <= MONSTER_ESCAPE_INTERACT_RANGE) monsterEscapeInteract(room, player.playerId)
       }
     } else {
-      const target = [...game.players.values()].find((entry) => entry.role === 'human' && monsterEscapeIsActive(entry) && !entry.hiddenSpotId && entry.floor === player.floor)
+      const target = [...game.players.values()].find((entry) => entry.role === 'human' && monsterEscapeIsActive(entry) && !entry.hiddenSpotId
+        && !entry.awaitingTransit && !entry.transitEndsAt && entry.floor === player.floor)
       if (target) {
         monsterEscapeMoveBotHorizontally(player, target.x, 6)
-        if (monsterEscapeDistance(player, target) <= MONSTER_ESCAPE_INTERACT_RANGE) monsterEscapeInteract(room, player.playerId)
+        if (monsterEscapeDistance(player, target) <= MONSTER_ESCAPE_MONSTER_ATTACK_RANGE) monsterEscapeInteract(room, player.playerId)
       } else {
         monsterEscapeMoveBotHorizontally(player, MONSTER_ESCAPE_LEFT_STAIRS_X, 6)
         if (Math.abs(player.x - MONSTER_ESCAPE_LEFT_STAIRS_X) <= MONSTER_ESCAPE_INTERACT_RANGE) {
@@ -936,6 +1023,12 @@ function monsterEscapeTick(room, now = Date.now()) {
   if (now >= game.roundEndsAt) return monsterEscapeFinishRound(room, 'monster', 'Time expired.')
   monsterEscapeTickBots(room, now)
   for (const player of game.players.values()) {
+    for (const [slotKey, endsAt] of Object.entries(player.activeItemSlots || {})) {
+      if (now < endsAt) continue
+      const slot = Number(slotKey)
+      if (slot >= 0 && player.inventory[slot]) player.inventory[slot] = null
+      delete player.activeItemSlots[slotKey]
+    }
     if (!monsterEscapeIsActive(player)) continue
     if (player.searchingUntil && now >= player.searchingUntil) monsterEscapeResolveSearch(room, player)
     if (player.transitEndsAt && now >= player.transitEndsAt) {
@@ -950,7 +1043,11 @@ function monsterEscapeTick(room, now = Date.now()) {
       player.hiddenSpotId = null
       player.hiddenUntil = 0
     }
-    if (player.role === 'monster' && player.killTargetId && now >= player.killEndsAt) monsterEscapeCompleteKill(room, player, monsterEscapePlayer(room, player.killTargetId))
+    if (player.role === 'monster' && player.killTargetId) {
+      const human = monsterEscapePlayer(room, player.killTargetId)
+      monsterEscapeApplyKillDamage(player, human, now)
+      if (now >= player.killEndsAt) monsterEscapeCompleteKill(room, player, human)
+    }
     if (player.role === 'monster' && !player.killTargetId) {
       if (player.frozenUntil && now >= player.frozenUntil) {
         player.frozenUntil = 0
@@ -1028,6 +1125,10 @@ function startMonsterEscapeGame(room) {
     players,
     inputs: new Map(),
     searchedSpotIds: new Set(),
+    emptySearchEvents: [],
+    emptySearchEventSequence: 0,
+    devourEvents: [],
+    devourEventSequence: 0,
     blocker: null,
     blindSequence: 0,
     lastBroadcastAt: 0,
@@ -1055,6 +1156,13 @@ function monsterEscapeGameView(room, viewerId) {
     matchWinnerRole: game.matchWinnerRole,
     roundEndsAt: game.roundEndsAt,
     blindSequence: game.blindSequence,
+    devourEvents: (game.devourEvents || [])
+      .filter((event) => event.expiresAt > now)
+      .map((event) => ({ ...event })),
+    emptySearchEvents: (game.emptySearchEvents || [])
+      .filter((event) => event.expiresAt > now && (!follow || (event.floor === follow.floor
+        && Math.abs(event.x - follow.x) <= monsterEscapeVision(follow, now))))
+      .map((event) => ({ ...event })),
     blocker: {
       removed: game.blocker?.removed || false,
       lifting: game.blocker?.lifterIds?.has(viewerId) || false,
@@ -1065,7 +1173,12 @@ function monsterEscapeGameView(room, viewerId) {
       blindRemainingMs: Math.max(0, viewer.blindedUntil - now),
       freezeRemainingMs: Math.max(0, viewer.frozenUntil - now),
       hideRemainingMs: Math.max(0, viewer.hiddenUntil - now),
+      flashlightRemainingMs: Math.max(0, viewer.flashlightUntil - now),
+      inventoryTimerEndsAt: viewer.inventory.map((_, slot) => Number(viewer.activeItemSlots?.[slot] || 0)),
       searchRemainingMs: Math.max(0, viewer.searchingUntil - now),
+      searchProgress: viewer.searchStartedAt
+        ? Math.min(1, Math.max(0, (now - viewer.searchStartedAt) / MONSTER_ESCAPE_SEARCH_MS))
+        : 0,
       transitRemainingMs: Math.max(0, viewer.transitEndsAt - now),
       hideSearchCooldownMs: Math.max(0, viewer.hideSearchCooldownUntil - now),
     },
@@ -1082,7 +1195,10 @@ function monsterEscapeGameView(room, viewerId) {
         y: MONSTER_ESCAPE_FLOOR_Y[entry.floor],
         facing: entry.facing,
         hidden: Boolean(entry.hiddenSpotId),
+        hideRemainingMs: Math.max(0, entry.hiddenUntil - now),
+        health: entry.role === 'human' ? entry.health : null,
         devoured: entry.devoured,
+        beingDevoured: entry.role === 'human' && Boolean(entry.grabbedById) && !entry.devoured,
         escaped: entry.escaped,
         grabbed: Boolean(entry.grabbedById),
         killing: Boolean(entry.killTargetId),
@@ -1090,9 +1206,35 @@ function monsterEscapeGameView(room, viewerId) {
         frozen: entry.frozenUntil > now,
         moving: Boolean(entry.moving || game.inputs.get(entry.playerId)?.direction),
         running: Boolean(entry.running || game.inputs.get(entry.playerId)?.running),
+        searching: Boolean(entry.searchingSpotId),
+        searchProgress: entry.searchStartedAt
+          ? Math.min(1, Math.max(0, (now - entry.searchStartedAt) / MONSTER_ESCAPE_SEARCH_MS))
+          : 0,
+        flashlightRemainingMs: Math.max(0, entry.flashlightUntil - now),
       })),
-    visibleSearchSpots: MONSTER_ESCAPE_SEARCH_SPOTS.filter((spot) => !game.searchedSpotIds.has(spot.id) && (!follow || (spot.floor === follow.floor && Math.abs(spot.x - follow.x) <= monsterEscapeVision(follow, now)))),
-    visibleHideSpots: MONSTER_ESCAPE_HIDE_SPOTS.filter((spot) => !follow || (spot.floor === follow.floor && Math.abs(spot.x - follow.x) <= monsterEscapeVision(follow, now))),
+    visibleSearchSpots: MONSTER_ESCAPE_SEARCH_SPOTS
+      .filter((spot) => !game.searchedSpotIds.has(spot.id) && (!follow || (spot.floor === follow.floor && Math.abs(spot.x - follow.x) <= monsterEscapeVision(follow, now))))
+      .map((spot) => ({ ...spot, y: Math.round(MONSTER_ESCAPE_FLOOR_Y[spot.floor] - 92) })),
+    visibleHideSpots: MONSTER_ESCAPE_HIDE_SPOTS
+      .filter((spot) => !follow || (spot.floor === follow.floor && Math.abs(spot.x - follow.x) <= monsterEscapeVision(follow, now)))
+      .map((spot) => ({
+        ...spot,
+        y: Math.round(MONSTER_ESCAPE_FLOOR_Y[spot.floor] - 92),
+        countdownRemainingMs: viewer?.hiddenSpotId === spot.id ? Math.max(0, viewer.hiddenUntil - now) : 0,
+      })),
+    visibleTransitSpots: MONSTER_ESCAPE_FLOORS
+      .filter((floor) => !follow || floor === follow.floor)
+      .flatMap((floor) => [
+        { id: `stairs-${floor}`, label: 'Stairs', floor, x: MONSTER_ESCAPE_LEFT_STAIRS_X, y: Math.round(MONSTER_ESCAPE_FLOOR_Y[floor] - 92) },
+        ...(MONSTER_ESCAPE_ELEVATOR_FLOORS.includes(floor) ? [{ id: `elevator-${floor}`, label: 'Elevator', floor, x: MONSTER_ESCAPE_ELEVATOR_X, y: Math.round(MONSTER_ESCAPE_FLOOR_Y[floor] - 92) }] : []),
+      ]),
+    availableTransitFloors: viewer?.awaitingTransit
+      ? MONSTER_ESCAPE_FLOORS.filter((floor) => floor !== viewer.floor
+        && (Math.abs(viewer.x - MONSTER_ESCAPE_LEFT_STAIRS_X) <= MONSTER_ESCAPE_INTERACT_RANGE
+          || (MONSTER_ESCAPE_ELEVATOR_FLOORS.includes(viewer.floor)
+            && MONSTER_ESCAPE_ELEVATOR_FLOORS.includes(floor)
+            && Math.abs(viewer.x - MONSTER_ESCAPE_ELEVATOR_X) <= MONSTER_ESCAPE_INTERACT_RANGE)))
+      : [],
     exit: MONSTER_ESCAPE_EXIT,
     floorY: MONSTER_ESCAPE_FLOOR_Y,
   }
@@ -3216,6 +3358,11 @@ wss.on('connection', (socket) => {
       }
       return
     }
+    if (message.type === 'monster_escape_search_cancel') {
+      if (room.game?.id !== 'monster_escape_office') return reject(socket, 'Monster Escape: Office is not active.')
+      monsterEscapeCancelSearch(room, clientId)
+      return
+    }
     if (message.type === 'monster_escape_select_floor') {
       const player = monsterEscapePlayer(room, clientId)
       if (!player?.awaitingTransit || !monsterEscapeStartTransit(room, player, Number(message.floor))) {
@@ -3226,7 +3373,7 @@ wss.on('connection', (socket) => {
     if (message.type === 'monster_escape_equip') {
       const player = monsterEscapePlayer(room, clientId)
       const slot = Number(message.slot)
-      if (!player || player.role !== 'human' || !Number.isInteger(slot) || slot < 0 || slot >= player.inventory.length) {
+      if (!player || player.role !== 'human' || !Number.isInteger(slot) || slot < 0 || slot >= player.inventory.length || !player.inventory[slot]) {
         return reject(socket, 'Choose an occupied inventory slot.')
       }
       player.equippedSlot = slot

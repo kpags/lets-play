@@ -1,7 +1,7 @@
 import { mkdir, readdir } from 'node:fs/promises'
 import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
-import { GifUtil } from 'gifwrap'
+import { GifFrame, GifUtil } from 'gifwrap'
 
 const scriptDirectory = dirname(fileURLToPath(import.meta.url))
 const charactersDirectory = join(scriptDirectory, '..', 'assets', 'games', 'team', 'monster_escape_office', 'characters')
@@ -111,7 +111,13 @@ function alignFeet(frames) {
 
 async function processGif(sourcePath, outputPath) {
   const gif = await GifUtil.read(sourcePath)
-  gif.frames.forEach(clearConnectedMatte)
+  gif.frames.forEach((frame) => {
+    clearConnectedMatte(frame)
+    // The transparent cutouts contain full-canvas frames. Clearing each
+    // previous frame prevents transparent pixels from revealing stale poses
+    // underneath and creating a duplicated/ghosted walking animation.
+    frame.disposalMethod = GifFrame.DisposeToBackgroundColor
+  })
   alignFeet(gif.frames)
   await GifUtil.write(outputPath, gif.frames, gif)
 }
